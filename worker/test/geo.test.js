@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { distanceMeters, bearingDegrees, isWithinRadius } from "../src/geo.js";
+import { distanceMeters, bearingDegrees, isWithinRadius, isValidCoordinate } from "../src/geo.js";
 import { SHIBUYA_STATION, SHIBUYA_RADIUS_M } from "../src/constants.js";
 
 test("distanceMeters: 同じ地点なら距離は0", () => {
@@ -64,4 +64,29 @@ test("bearingDegrees: AからB・BからAの方位は約180度反対(渋谷エ�
   const normalizedDiff = ((aToB - bToA + 540) % 360) - 180;
   const diffFrom180 = Math.abs(Math.abs(normalizedDiff) - 180);
   assert.ok(diffFrom180 < 1, `expected ~180deg apart, got aToB=${aToB} bToA=${bToA} (diff from 180: ${diffFrom180})`);
+});
+
+// ---- M4セキュリティ対応: 入力検証(緯度経度) ----
+test("isValidCoordinate: 渋谷駅の座標は有効", () => {
+  assert.equal(isValidCoordinate(SHIBUYA_STATION.lat, SHIBUYA_STATION.lng), true);
+});
+
+test("isValidCoordinate: 範囲外(緯度91度・経度181度)は無効", () => {
+  assert.equal(isValidCoordinate(91, 139.7), false);
+  assert.equal(isValidCoordinate(35.6, 181), false);
+  assert.equal(isValidCoordinate(-91, 139.7), false);
+  assert.equal(isValidCoordinate(35.6, -181), false);
+});
+
+test("isValidCoordinate: NaN・Infinity・文字列・undefinedは無効", () => {
+  assert.equal(isValidCoordinate(NaN, 139.7), false);
+  assert.equal(isValidCoordinate(35.6, Infinity), false);
+  assert.equal(isValidCoordinate(-Infinity, 139.7), false);
+  assert.equal(isValidCoordinate("35.6", 139.7), false);
+  assert.equal(isValidCoordinate(undefined, 139.7), false);
+});
+
+test("isValidCoordinate: 境界値(±90/±180ちょうど)は有効", () => {
+  assert.equal(isValidCoordinate(90, 180), true);
+  assert.equal(isValidCoordinate(-90, -180), true);
 });

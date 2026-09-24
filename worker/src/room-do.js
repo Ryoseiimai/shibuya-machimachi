@@ -27,6 +27,14 @@ import { MAX_JUDGE_CALLS } from "./constants.js";
 
 const ROOM_KEY = "room";
 
+// M3セキュリティ対応: WSメッセージのサイズ上限(バイト)。超過分は中身を見ずに黙って捨てる
+// (DoS対策優先。エラー通知もしない)。
+const MAX_WS_MESSAGE_BYTES = 2048;
+// M3セキュリティ対応: 位置情報送信の最小間隔(ミリ秒)。連投は無視して間引く。
+const LOCATION_MIN_INTERVAL_MS = 1000;
+// M2セキュリティ対応: 同一roleでの新規WS接続時に閉じる、既存接続へのcloseコード。
+const DUPLICATE_CONNECTION_CLOSE_CODE = 4001;
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -62,6 +70,15 @@ export class RoomDO {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
+    // H2セキュリティ対応: 「会えた」判定(handleJudge)の同期ロック。judgeメッセージのハンドラは
+    // Jev API呼び出し(fetch、storage以外のawait)を挟むため、Durable Objectの入力ゲートだけでは
+    // 同時に届いた2件目の judge メッセージが1件目のawait中に処理されてしまうのを防げない
+    // (loadRoom等のstorage呼び出し中はゲートされるが、fetch待ち中はゲートされない)。
+    // このインスタンスメモリ上のフラグで、1部屋につき常に1回のJev呼び出ししか同時に走らせない。
+    this.judgeInProgress = false;
+    // M3セキュリティ対応: role("host"/"guest")ごとに直近の位置情報送信時刻を覚えておき、
+    // LOCATION_MIN_INTERVAL_MS未満の連投を間引く(ハイバネーション復帰でリセットされても実害はない)。
+    this.lastLocationAt = new Map();
   }
 
   async loadRoom() {
@@ -113,10 +130,14 @@ export class RoomDO {
   }
 
   async handleJoin(request) {
-    const room = await this.loadRoom();
-    if (!room) return jsonResponse({ ok: false, reason: "not_found" }, 404);
+    // M1セキュリティ対応: request.json()(storageではないawait)を先に読み切ってから
+    // loadRoom→joinRoom→saveRoomを実行する。storage以外のawaitをこの区間に挟むと、
+    // 同時に届いた2件目のjoinがDurable Objectの入力ゲートをすり抜けて古いroomを
+    // 読んでしまい、招待トークンの2重消費(=定員2人を超える参加)につながるため。
     const body = await request.json().catch(() => null);
     if (!body) return jsonResponse({ ok: false, reason: "invalid_request" }, 400);
+    const room = await this.loadRoom();
+    if (!room) return jsonResponse({ ok: false, reason: "not_found" }, 404);
     const next = joinRoom(room, { inviteToken: body.invite, nickname: body.nickname });
     await this.saveRoom(next);
     this.broadcast(next);
@@ -132,6 +153,16 @@ export class RoomDO {
     if (!authenticate(room, role, secret)) return jsonResponse({ ok: false, reason: "unauthorized" }, 401);
     if (request.headers.get("Upgrade") !== "websocket") {
       return jsonResponse({ ok: false, reason: "expected_websocket" }, 426);
+    }
+
+    // M2セキュリティ対応: 同じroleで既に繋がっているソケットがあれば先に閉じる
+    // (1人が複数タブ/複数端末で同時に繋いでbroadcastを混乱させるのを防ぐ。1role=1接続)。
+    for (const existing of this.ctx.getWebSockets(`role:${role}`)) {
+      try {
+        existing.close(DUPLICATE_CONNECTION_CLOSE_CODE, "duplicate_connection");
+      } catch (_err) {
+        /* noop */
+      }
     }
 
     const pair = new WebSocketPair();
@@ -166,6 +197,10 @@ export class RoomDO {
   }
 
   async webSocketMessage(ws, message) {
+    // M3セキュリティ対応: 2KBを超えるメッセージは中身を見ずに黙って捨てる(DoS対策優先)。
+    const byteLength = typeof message === "string" ? new TextEncoder().encode(message).length : message.byteLength;
+    if (byteLength > MAX_WS_MESSAGE_BYTES) return;
+
     const attachment = ws.deserializeAttachment() || {};
     const role = attachment.role;
     const secret = attachment.secret;
@@ -194,6 +229,12 @@ export class RoomDO {
         await this.saveRoom(next);
         this.broadcast(next);
       } else if (payload.type === "location") {
+        // M3セキュリティ対応: 位置情報の連投を1秒に1回程度へ間引く(超過分は無視)。
+        const lastAt = this.lastLocationAt.get(role) || 0;
+        const now = Date.now();
+        if (now - lastAt < LOCATION_MIN_INTERVAL_MS) return;
+        this.lastLocationAt.set(role, now);
+
         const result = updateLocation(room, {
           role,
           secret,
@@ -218,30 +259,42 @@ export class RoomDO {
   }
 
   async handleJudge(room, ws) {
-    const gate = canAttemptJudge(room);
-    if (!gate.ok) {
-      this.sendJson(ws, { type: "judgeResult", ok: false, reason: gate.reason, distance_m: gate.distance_m ?? null });
+    // H2セキュリティ対応: このDOインスタンス内で同時に1件しかJev判定を走らせない。
+    // 理由はコンストラクタのjudgeInProgressのコメント参照(fetch待ち中は入力ゲートが
+    // 効かないため、ここで明示的にロックしないとJev呼び出し回数の上限をすり抜けられる)。
+    if (this.judgeInProgress) {
+      this.sendJson(ws, { type: "judgeResult", ok: false, reason: "judge_in_progress" });
       return;
     }
-    const waitingMinutes = (Date.now() - room.createdAt) / 60000;
-    const floorMatch = true; // gate.ok===true の時点で同じ階であることは確認済み
-    const canUseJev = !!this.env.JEV_API_KEY && room.judge.callCount < MAX_JUDGE_CALLS;
+    this.judgeInProgress = true;
+    try {
+      const gate = canAttemptJudge(room);
+      if (!gate.ok) {
+        this.sendJson(ws, { type: "judgeResult", ok: false, reason: gate.reason, distance_m: gate.distance_m ?? null });
+        return;
+      }
+      const waitingMinutes = (Date.now() - room.createdAt) / 60000;
+      const floorMatch = true; // gate.ok===true の時点で同じ階であることは確認済み
+      const canUseJev = !!this.env.JEV_API_KEY && room.judge.callCount < MAX_JUDGE_CALLS;
 
-    let result;
-    if (canUseJev) {
-      try {
-        const context = buildMeetContext({ distance_m: gate.distance_m, floorMatch, waitingMinutes });
-        result = await callJev(this.env.JEV_API_KEY, context);
-      } catch (_err) {
+      let result;
+      if (canUseJev) {
+        try {
+          const context = buildMeetContext({ distance_m: gate.distance_m, floorMatch, waitingMinutes });
+          result = await callJev(this.env.JEV_API_KEY, context);
+        } catch (_err) {
+          result = distanceOnlyJudge({ distance_m: gate.distance_m, floorMatch });
+        }
+      } else {
         result = distanceOnlyJudge({ distance_m: gate.distance_m, floorMatch });
       }
-    } else {
-      result = distanceOnlyJudge({ distance_m: gate.distance_m, floorMatch });
-    }
 
-    const next = recordJudgeResult(room, { ...result, now: Date.now() });
-    await this.saveRoom(next);
-    this.broadcast(next);
+      const next = recordJudgeResult(room, { ...result, now: Date.now() });
+      await this.saveRoom(next);
+      this.broadcast(next);
+    } finally {
+      this.judgeInProgress = false;
+    }
   }
 
   sendJson(ws, data) {

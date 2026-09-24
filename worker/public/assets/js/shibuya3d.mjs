@@ -1,10 +1,13 @@
 // Shibuya 3D map + nearby-shops component.
 //
-// Single ESM file. Only external dependency is MapLibre GL JS, loaded from the
-// jsdelivr CDN (both JS and CSS) so this file can be dropped into any page/app
-// without a bundler. Data files (building footprints, shop POIs) live next to
-// this file under ../data/ and are resolved relative to this module's own URL,
-// so the component works regardless of which page imports it.
+// Single ESM file. Only external dependency is MapLibre GL JS, self-hosted from
+// ../../vendor/maplibre-gl/ (vendored via npm, see worker/package.json devDependencies
+// and public/vendor/maplibre-gl/VERSION.txt) so this file can be dropped into any
+// page/app without a bundler and without depending on a third-party CDN at runtime
+// (2026-09-24 security review: CDN script/style sources were an unpinned supply-chain
+// dependency and a CSP script-src weak point). Data files (building footprints, shop
+// POIs) live next to this file under ../data/ and are resolved relative to this
+// module's own URL, so the component works regardless of which page imports it.
 //
 // Public API:
 //   mountShibuya3D(el, { onReady }) -> Promise<{ setMe, setPartner, focusBoth, destroy }>
@@ -28,12 +31,11 @@ import {
   Marker,
   NavigationControl,
   AttributionControl,
-} from "https://cdn.jsdelivr.net/npm/maplibre-gl@6/+esm";
-
-const MAPLIBRE_CSS_URL = "https://cdn.jsdelivr.net/npm/maplibre-gl@6/dist/maplibre-gl.css";
-const GSI_PALE_TILES_URL = "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png";
+} from "../../vendor/maplibre-gl/maplibre-gl.mjs";
 
 const MODULE_URL = import.meta.url;
+const MAPLIBRE_CSS_URL = new URL("../../vendor/maplibre-gl/maplibre-gl.css", MODULE_URL).href;
+const GSI_PALE_TILES_URL = "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png";
 const DEFAULT_BUILDINGS_URL = new URL("../data/buildings_shibuya_1500m.geojson", MODULE_URL).href;
 const DEFAULT_POIS_URL = new URL("../data/pois_shibuya_1500m.geojson", MODULE_URL).href;
 

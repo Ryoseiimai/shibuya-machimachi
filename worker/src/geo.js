@@ -33,3 +33,23 @@ export function bearingDegrees(lat1, lng1, lat2, lng2) {
 export function isWithinRadius(lat, lng, centerLat, centerLng, radiusM) {
   return distanceMeters(lat, lng, centerLat, centerLng) <= radiusM;
 }
+
+export const MIN_LATITUDE = -90;
+export const MAX_LATITUDE = 90;
+export const MIN_LONGITUDE = -180;
+export const MAX_LONGITUDE = 180;
+
+// 緯度経度として有効な範囲内の有限数かどうか(NaN・±Infinity・地球上に存在しない値を弾く。
+// M4セキュリティ対応: クライアントから届くlat/lngをroom.jsのupdateLocation()で使う)。
+export function isValidCoordinate(lat, lng) {
+  return (
+    typeof lat === "number" &&
+    Number.isFinite(lat) &&
+    lat >= MIN_LATITUDE &&
+    lat <= MAX_LATITUDE &&
+    typeof lng === "number" &&
+    Number.isFinite(lng) &&
+    lng >= MIN_LONGITUDE &&
+    lng <= MAX_LONGITUDE
+  );
+}

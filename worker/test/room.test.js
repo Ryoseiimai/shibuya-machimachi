@@ -218,3 +218,52 @@ test("expiresAtはROOM_TTL_MS(3時間)後に設定される", () => {
   const room = createRoom({ hostNickname: "A", roomId: ROOM_ID, now: NOW });
   assert.equal(room.expiresAt - room.createdAt, 3 * 60 * 60 * 1000);
 });
+
+// ---- M4セキュリティ対応: 入力検証 ----
+test("ニックネームの制御文字は除去され、除去後が空なら invalid_nickname になる", () => {
+  const room = createRoom({ hostNickname: "り\u0000ょう\u0007せい", roomId: ROOM_ID, now: NOW });
+  assert.equal(room.host.nickname, "りょうせい", "制御文字だけが取り除かれる");
+
+  assert.throws(
+    () => createRoom({ hostNickname: "\u0000\u0001\u0002", roomId: ROOM_ID, now: NOW }),
+    (e) => e.code === ERROR_CODES.INVALID_NICKNAME,
+    "制御文字を除去した結果が空文字ならinvalid_nickname",
+  );
+});
+
+test("updateLocation: 範囲外(緯度91度)やInfinityの座標はinvalid_locationで拒否される", () => {
+  const { room, hostSecret } = makeActiveRoom();
+  assert.throws(
+    () => updateLocation(room, { role: "host", secret: hostSecret, lat: 91, lng: 139.7, now: NOW }),
+    (e) => e.code === ERROR_CODES.INVALID_LOCATION,
+  );
+  assert.throws(
+    () => updateLocation(room, { role: "host", secret: hostSecret, lat: Infinity, lng: 139.7, now: NOW }),
+    (e) => e.code === ERROR_CODES.INVALID_LOCATION,
+  );
+});
+
+test("updateLocation: accが負の数や有限でない場合はinvalid_locationで拒否される(未指定は許可)", () => {
+  const { room, hostSecret } = makeActiveRoom();
+  assert.throws(
+    () => updateLocation(room, { role: "host", secret: hostSecret, ...NEAR_A, acc: -1, now: NOW }),
+    (e) => e.code === ERROR_CODES.INVALID_LOCATION,
+  );
+  assert.throws(
+    () => updateLocation(room, { role: "host", secret: hostSecret, ...NEAR_A, acc: Infinity, now: NOW }),
+    (e) => e.code === ERROR_CODES.INVALID_LOCATION,
+  );
+  const ok = updateLocation(room, { role: "host", secret: hostSecret, ...NEAR_A, now: NOW }); // acc未指定
+  assert.equal(ok.accepted, true);
+});
+
+test("setFloor: FLOORSに無い値(B6・11F・3.5F等)はinvalid_floorで拒否される", () => {
+  const { room, hostSecret } = makeActiveRoom();
+  for (const bad of ["B6", "11F", "3.5F", "", "3f", 3]) {
+    assert.throws(
+      () => setFloor(room, { role: "host", secret: hostSecret, floor: bad, now: NOW }),
+      (e) => e.code === ERROR_CODES.INVALID_FLOOR,
+      `floor=${JSON.stringify(bad)} should be rejected`,
+    );
+  }
+});

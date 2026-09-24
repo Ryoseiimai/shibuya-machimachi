@@ -3,13 +3,13 @@
 // 本番同等の疎通確認は `curl` によるスモークテストで別途行う。
 import { defineConfig } from "@playwright/test";
 
-const PORT = 8788; // ローカル開発(npm run dev, 8787)と衝突しないポート
+const PORT = 8799; // ローカル開発(npm run dev, 8787)・他セッションの8788系と衝突しないポート
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./tests",
-  // 60秒(元は30秒): 3D渋谷がMapLibre GL JS本体をjsdelivr CDNから取得するステップを含むため、
-  // 初回・低速回線での余裕を持たせる(以後の`toPass`個別timeoutは変更していない)。
+  // 60秒(元は30秒): 3D渋谷(MapLibre GL JS・three.js、2026-09-24以降はworker/public/vendor/に
+  // 自ホスト)とAR部品の初回読み込みに余裕を持たせる(以後の`toPass`個別timeoutは変更していない)。
   timeout: 60_000,
   fullyParallel: false,
   retries: 0,
