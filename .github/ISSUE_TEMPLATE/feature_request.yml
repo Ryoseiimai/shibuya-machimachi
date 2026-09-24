@@ -1,0 +1,32 @@
+name: Feature request / 機能提案
+description: Suggest an idea for this project / アイデアを提案する
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting: features that share a person's location before mutual
+        approval, that raise the 2-person room cap, or that remove the Shibuya-area
+        restriction will not be accepted without discussion — see
+        [SECURITY.md](https://github.com/Ryoseiimai/shibuya-machimachi/blob/main/SECURITY.md).
+        投稿前に: 相互承認前に位置を共有する機能、2人という定員を増やす機能、渋谷エリア制限を
+        外す機能は、議論なしには受け付けません。SECURITY.md を参照してください。
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve? / どんな課題を解決しますか？
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution / 提案する解決策
+    validations:
+      required: true
+  - type: checkboxes
+    id: acceptable-use
+    attributes:
+      label: Acceptable use
+      options:
+        - label: This feature does not share a location before both people explicitly approve. / この機能は、両者が明示的に承認する前に位置を共有しません。
+          required: true

@@ -1,0 +1,9 @@
+{
+  "name": "shibuya-machimachi",
+  "private": true,
+  "description": "渋谷マチマチ: 渋谷駅から半径1.5km限定、相互承認した2人だけで位置を共有する待ち合わせアプリ",
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "test": "cd worker && npm test"
+  }
+}

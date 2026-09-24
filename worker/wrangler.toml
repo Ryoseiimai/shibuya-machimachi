@@ -1,0 +1,14 @@
+name = "shibuya-machimachi"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[durable_objects.bindings]]
+name = "ROOM_DO"
+class_name = "RoomDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDO"] # SQLiteバックエンド。Workers Freeプランで利用できる
+
+# JEV_API_KEY はリポジトリに書かない。`wrangler secret put JEV_API_KEY` で設定する。
+# 未設定のときは worker/src/jev.js が距離だけの判定(distance_only)に自動でフォールバックする。

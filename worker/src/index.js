@@ -1,0 +1,81 @@
+/**
+ * shibuya-machimachi worker
+ *
+ * ルーティング:
+ *   POST /api/rooms                          待ち合わせを作る(ニックネームのみ)
+ *   GET  /api/rooms/:roomId/preview?invite=  招待リンクのプレビュー(参加前)
+ *   POST /api/rooms/:roomId/join             招待トークンで参加する
+ *   GET  /api/rooms/:roomId/ws?role=&secret= WebSocket接続(以降のやり取りは全てこれ経由)
+ *   GET  /  , GET /r/:roomId                 スマホ用HTML画面(1枚をパスに関わらず配信)
+ *
+ * 実体のルーム管理は Durable Object(RoomDO, room-do.js)に委譲する。roomIdはこのWorker側で
+ * crypto.randomUUID()由来のランダムな32桁16進文字列として発行し、
+ * env.ROOM_DO.idFromName(roomId) で常に同じDOインスタンスに解決する。
+ */
+import { RoomDO } from "./room-do.js";
+import { randomToken } from "./room.js";
+import { APP_HTML } from "./html.js";
+
+export { RoomDO };
+
+const ROOM_ID_PATTERN = "[a-f0-9]{32}";
+const ROOM_ACTION_RE = new RegExp(`^/api/rooms/(${ROOM_ID_PATTERN})(/(?:preview|join|ws))$`);
+const ROOM_PAGE_RE = new RegExp(`^/r/(${ROOM_ID_PATTERN})$`);
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+function getStub(env, roomId) {
+  return env.ROOM_DO.get(env.ROOM_DO.idFromName(roomId));
+}
+
+async function forwardToRoom(env, roomId, path, request) {
+  const stub = getStub(env, roomId);
+  const url = new URL(request.url);
+  const target = new URL(path + url.search, "https://room.internal");
+  const init = { method: request.method, headers: request.headers };
+  if (request.method !== "GET" && request.method !== "HEAD") init.body = request.body;
+  return stub.fetch(new Request(target, init));
+}
+
+async function handleCreateRoom(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body.nickname !== "string" || !body.nickname.trim()) {
+    return json({ ok: false, reason: "invalid_nickname" }, 400);
+  }
+  const roomId = randomToken();
+  const stub = getStub(env, roomId);
+  const initRequest = new Request("https://room.internal/init", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ roomId, hostNickname: body.nickname }),
+  });
+  return stub.fetch(initRequest);
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/api/rooms" && request.method === "POST") {
+      return handleCreateRoom(request, env);
+    }
+
+    const roomMatch = url.pathname.match(ROOM_ACTION_RE);
+    if (roomMatch) {
+      const roomId = roomMatch[1];
+      const action = roomMatch[2];
+      return forwardToRoom(env, roomId, action, request);
+    }
+
+    if (request.method === "GET" && (url.pathname === "/" || ROOM_PAGE_RE.test(url.pathname))) {
+      return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+
+    return json({ error: "not found" }, 404);
+  },
+};

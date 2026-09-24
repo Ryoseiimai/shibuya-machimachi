@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & ideas / 質問・雑談
+    url: https://github.com/Ryoseiimai/shibuya-machimachi/discussions
+    about: Use GitHub Discussions for open-ended questions or ideas that aren't a specific bug/feature yet.
+  - name: Report a security issue / 脆弱性の報告
+    url: https://github.com/Ryoseiimai/shibuya-machimachi/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue. See SECURITY.md.
