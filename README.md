@@ -52,13 +52,13 @@ npm run dev   # または: make dev
 
 ## ロードマップ
 
-今回作ったのは土台(招待リンク→相互承認→リアルタイムの距離と方角)です。画面には次の機能の置き場所(空の枠)だけ用意してあります。
+土台(招待リンク→相互承認→リアルタイムの距離と方角)に加えて、3D渋谷・近くのお店・ARを実装済みです。
 
-- [ ] **3D渋谷** — [PLATEAU](https://www.mlit.go.jp/plateau/)(国土交通省の3D都市モデル)を使って、渋谷の建物を3Dで表示する
-- [ ] **近くのお店** — [OpenStreetMap](https://www.openstreetmap.org/)のデータで、待ち合わせ地点周辺のお店を表示する
+- [x] **3D渋谷** — [PLATEAU](https://www.mlit.go.jp/plateau/)(国土交通省の3D都市モデル)を使って、渋谷の建物を3Dで表示する。自分と相手のピン(階も反映)が立ち、`focusBoth()`で2人が収まる位置まで自動的に引く
+- [x] **近くのお店** — [OpenStreetMap](https://www.openstreetmap.org/)のデータで、相手の推定位置周辺の近い順3件を表示する
 - [ ] **上下(フロア)の自動化** — 今は手動選択(B5〜10F)のピッカーのみ。将来は端末の気圧センサーなどから高度を推定し、手動選択と組み合わせる
-- [ ] **AR** — カメラ越しに、相手がいる方向へ人影を重ねて表示する
-- [ ] **VRメガネ対応** — [WebXR](https://www.w3.org/TR/webxr/)で、VR/ARグラス上でも同じ矢印・距離表示を使えるようにする
+- [x] **AR** — 「ARで探す」ボタンから全画面ARビューを開き、カメラ越しに相手がいる方向へ人影(シルエット)と距離を重ねて表示する
+- [ ] **VRメガネ対応(実験的)** — [WebXR](https://www.w3.org/TR/webxr/)の immersive-ar/immersive-vr に対応した端末でのみ、AR画面内に「VRメガネで見る」ボタンが出る。iPhone/Vision Proなど非対応端末には出さない
 
 ## 参加方法 (Contributing)
 
@@ -77,7 +77,10 @@ Issue・PR歓迎です。
 ## ライセンス・地図データの出典
 
 - コード本体は **MIT License**([LICENSE](LICENSE)参照)。
-- 地図データ・3D都市モデルの出典表記の置き場: 上記ロードマップの「3D渋谷」(PLATEAU, CC BY 4.0)・「近くのお店」(OpenStreetMap, ODbL)を実装する際は、(1)該当する画面枠(`#slot-3d` / `#slot-shops`)の直下に出典クレジットを表示し、(2)このセクションにも出典元とライセンスを追記すること。現時点では地図データは未使用のため、追加のクレジット表記はありません。
+- 建物3Dモデル: 出典 [国土交通省 3D都市モデルPLATEAU](https://www.mlit.go.jp/plateau/)(渋谷区, **CC BY 4.0**)。
+- 地図タイル: [地理院タイル](https://maps.gsi.go.jp/development/ichiran.html)(国土地理院)。
+- 店舗情報: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)(**ODbL**)。
+- 上記3件のクレジットは、待ち合わせ画面の3D渋谷/近くのお店の枠のすぐ下(フッター)と、3D地図右下のMapLibre属性コントロールの両方に表示しています。
 
 ---
 
@@ -131,13 +134,13 @@ See [SECURITY.md](SECURITY.md) for the full set of lines this codebase must not 
 
 ## Roadmap
 
-What's built so far is the foundation (invite link → mutual approval → realtime distance/bearing). The screens already reserve empty slots for what comes next.
+On top of the foundation (invite link → mutual approval → realtime distance/bearing), 3D Shibuya, nearby shops, and AR are now implemented.
 
-- [ ] **3D Shibuya** — render Shibuya's buildings in 3D using [PLATEAU](https://www.mlit.go.jp/plateau/) (Japan's MLIT 3D city model)
-- [ ] **Nearby shops** — show shops around the meeting point using [OpenStreetMap](https://www.openstreetmap.org/) data
+- [x] **3D Shibuya** — renders Shibuya's buildings in 3D using [PLATEAU](https://www.mlit.go.jp/plateau/) (Japan's MLIT 3D city model). Pins for you and the other person (floor included) appear, and `focusBoth()` auto-zooms out until both fit
+- [x] **Nearby shops** — shows the 3 closest shops to the other person's estimated location, using [OpenStreetMap](https://www.openstreetmap.org/) data
 - [ ] **Automatic floor detection** — today it's a manual B5–10F picker only; later, estimate altitude from device sensors (e.g. barometer) and combine it with manual selection
-- [ ] **AR** — overlay a silhouette pointing toward the other person through the camera
-- [ ] **VR glasses support** — use [WebXR](https://www.w3.org/TR/webxr/) so the same arrow/distance display works on VR/AR glasses
+- [x] **AR** — the "ARで探す" (Find in AR) button opens a fullscreen AR view that overlays a silhouette and distance toward the other person through the camera
+- [ ] **VR glasses support (experimental)** — a "VRメガネで見る" (View with VR glasses) button appears inside the AR view only on devices that support [WebXR](https://www.w3.org/TR/webxr/) immersive-ar/immersive-vr; not shown on unsupported devices like iPhone or Vision Pro
 
 ## Contributing
 
@@ -156,4 +159,7 @@ This app evolved from [OG探しゲーム (Ryoseiimai/gmaps-share-finder)](https:
 ## License & map data attribution
 
 - The code is **MIT licensed** (see [LICENSE](LICENSE)).
-- Placeholder for map-data attribution: when the roadmap's "3D Shibuya" (PLATEAU, CC BY 4.0) and "Nearby shops" (OpenStreetMap, ODbL) items are implemented, (1) show the credit directly under the relevant slot (`#slot-3d` / `#slot-shops`) in the UI, and (2) add the source and license here too. No map data is used yet, so there is no additional credit to show at this time.
+- 3D building models: [MLIT PLATEAU](https://www.mlit.go.jp/plateau/) 3D city model (Shibuya ward, **CC BY 4.0**).
+- Map tiles: [GSI tiles](https://maps.gsi.go.jp/development/ichiran.html) (Geospatial Information Authority of Japan).
+- Shop data: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (**ODbL**).
+- All three credits appear both in the footer directly under the 3D Shibuya / nearby shops slots on the meetup screen, and in the MapLibre attribution control (bottom-right of the 3D map).

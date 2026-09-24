@@ -9,7 +9,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = path.join(__dirname, "..", "..", "控え");
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
-// 渋谷駅ちょうどと、そこから約4.4m北の2点(どちらも渋谷エリア内・20m以内)
+// 渋谷駅ちょうどと、そこから約4.4m真北の2点(どちらも渋谷エリア内・20m以内)。
+// 「真北」にしているのは、AのAR視点で相手(B)が視野角(60度)の正面に来るようにするため
+// (AR部品は端末の向きセンサーの初期値heading=0=北向きを前提に人影を描画する。詳細はテスト内の
+// AR検証コメント参照)。
 const POINT_A = { latitude: 35.658, longitude: 139.7016 };
 const POINT_B = { latitude: 35.65804, longitude: 139.7016 };
 
@@ -23,7 +26,9 @@ test("host creates, guest joins via invite link, both approve, distance+arrow ap
   const contextA = await browser.newContext({
     viewport: MOBILE_VIEWPORT,
     geolocation: POINT_A,
-    permissions: ["geolocation"],
+    // cameraはAR画面(pageAで検証)がgetUserMediaを呼ぶために必要。実際の映像はplaywright.config.jsの
+    // --use-fake-device-for-media-stream による合成のダミー映像で、実カメラは使わない。
+    permissions: ["geolocation", "camera"],
   });
   const contextB = await browser.newContext({
     viewport: MOBILE_VIEWPORT,
@@ -101,6 +106,39 @@ test("host creates, guest joins via invite link, both approve, distance+arrow ap
 
   await shot(pageA, "06_active_host_distance_and_arrow.png");
   await shot(pageB, "07_active_guest_distance_and_arrow.png");
+
+  // 08: 近くのお店 — 相手(B)の推定位置(サーバーのdistance_m/bearing_degから復元、生座標そのものではない)
+  // から見て近い順3件が表示される。
+  await expect(async () => {
+    const count = await pageA.locator("#shops-list li").count();
+    expect(count).toBe(3);
+  }).toPass({ timeout: 20_000 });
+
+  // 09: 3D渋谷 — 自分・相手それぞれのピン(MapLibreのDOM Marker要素)が1本ずつ、計2本立つ。
+  await expect(async () => {
+    const pinCount = await pageA.locator("#map3d .maplibregl-marker").count();
+    expect(pinCount).toBe(2);
+  }).toPass({ timeout: 20_000 });
+
+  // #slot-shopsと#slot-3dは隣接するカードなので、前者の上端をビューポート上端ぎりぎりまで
+  // スクロールすると、高さ844pxのビューポート内に両方(お店3件+3Dピン2本)が収まる。
+  await pageA.evaluate(() => {
+    const el = document.getElementById("slot-shops");
+    window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 8);
+  });
+  await shot(pageA, "10_active_with_3d_shops.png");
+
+  // 10: AR — 「ARで探す」ボタンで全画面ARビューを開くと、相手がいる方向に人影(シルエット)が出る。
+  // POINT_BはPOINT_Aの真北にあり、ARの向きセンサーはヘッドレス環境では初期値heading=0(北向き)の
+  // ままなので、相手の方位(≒0度)は視野角60度の正面に収まり、矢印ではなく人影が表示される側になる
+  // (ar.js の render(): |normalizeAngleDiff(heading, bearing)| <= 30 で人影、それ以外は矢印)。
+  await expect(pageA.locator("#ar-open-btn")).toBeEnabled({ timeout: 20_000 });
+  await pageA.click("#ar-open-btn");
+  await expect(pageA.locator("#ar-fullscreen")).toBeVisible();
+  await expect(pageA.locator(".mm-ar-person")).toBeVisible({ timeout: 10_000 });
+  await shot(pageA, "11_ar_view.png");
+  await pageA.click("#ar-close-btn");
+  await expect(pageA.locator("#ar-fullscreen")).toBeHidden();
 
   await contextA.close();
   await contextB.close();
