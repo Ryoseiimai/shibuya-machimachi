@@ -10,6 +10,7 @@
  * サーバーから届く phase で決める。
  */
 import { FLOORS, SHIBUYA_RADIUS_M, MEET_DISTANCE_M } from "./constants.js";
+import { formatRelativeTime } from "./format.js";
 
 const FLOOR_OPTIONS = FLOORS.map((f) => `<option value="${f}">${f}</option>`).join("");
 const RADIUS_KM = (SHIBUYA_RADIUS_M / 1000).toFixed(1);
@@ -230,6 +231,18 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
   var ws = null;
   var lastState = null;
   var heading = 0;
+  var lastOtherUpdatedAt = null;
+
+  var formatRelativeTime = ${formatRelativeTime.toString()};
+  function updateOtherUpdatedAt() {
+    var updatedEl = document.getElementById("meet-updated-at");
+    updatedEl.textContent = lastOtherUpdatedAt != null
+      ? "相手の最終更新: " + formatRelativeTime(lastOtherUpdatedAt)
+      : "相手の位置を待っています…";
+  }
+  setInterval(function () {
+    if (lastOtherUpdatedAt != null) updateOtherUpdatedAt();
+  }, 1000);
 
   function storageKey(roomId, field) { return "sm:" + roomId + ":" + field; }
   function saveSession(roomId, role, secret) {
@@ -314,13 +327,8 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     distEl.textContent = state.distance_m != null ? state.distance_m : "--";
     if (state.bearing_deg != null) applyArrowRotation(state.bearing_deg);
 
-    var updatedEl = document.getElementById("meet-updated-at");
-    if (state.other && state.other.lastUpdatedAt) {
-      var t = new Date(state.other.lastUpdatedAt).toLocaleTimeString("ja-JP");
-      updatedEl.textContent = "相手の最終更新: " + t;
-    } else {
-      updatedEl.textContent = "相手の位置を待っています…";
-    }
+    lastOtherUpdatedAt = state.other ? state.other.lastUpdatedAt : null;
+    updateOtherUpdatedAt();
 
     document.getElementById("floor-diff-text").textContent = state.floorDiffText || "";
 
