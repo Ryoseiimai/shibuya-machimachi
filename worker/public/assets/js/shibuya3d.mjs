@@ -30,7 +30,6 @@ import {
   Map as MapLibreMap,
   Marker,
   NavigationControl,
-  AttributionControl,
 } from "../../vendor/maplibre-gl/maplibre-gl.mjs";
 
 const MODULE_URL = import.meta.url;
@@ -63,6 +62,17 @@ const LABEL_Z_INDEX = "50"; // ラベルを常に最前面にする(念のため
 const FOCUS_PADDING_RATIO = 0.12; // コンテナの幅・高さそれぞれの12%を片側パディングにする
 const FOCUS_PADDING_MIN_PX = 12;
 const FOCUS_PADDING_MAX_PX = 40;
+// focusBoth時、ラベル(buildLabelElのカード)が横方向にfitBoundsの外へはみ出さないよう、
+// ラベル文字幅から見積もった半分の幅もパディング候補に加える(見た目のチューニング)。
+// コンテナ幅の半分を超えないよう最終的に安全クランプする(下のsafeSidePadding参照。
+// 超えるとMapLibreのfitBoundsが"Invalid LngLat"を投げて後続処理が丸ごと止まる不具合の再発防止)。
+const FOCUS_LABEL_PADDING_MAX_PX = 90;
+const LABEL_FONT = "700 12px -apple-system, 'Hiragino Sans', sans-serif"; // buildLabelElのcardと同じ
+const LABEL_CARD_HORIZONTAL_PADDING_PX = 9 * 2; // buildLabelElの `padding: 4px 9px` の左右分
+
+// 近接時、2つのラベルが画面上で重なりそうならどちらかを縦にずらして両方読めるようにする。
+const LABEL_STACK_DISTANCE_PX = 56; // これより画面上の距離が近ければ「重なりそう」とみなす
+const LABEL_STACK_OFFSET_PX = 34; // ずらす量(ラベルの高さ+隙間の概算)
 
 const ME_COLOR = "#1e88e5";
 const ME_BASEMENT_COLOR = "#37474f";
@@ -118,8 +128,25 @@ function metersPerPixelAt(lat, zoom) {
   return (EARTH_CIRCUMFERENCE_CONST * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
 }
 
-function clampPx(px) {
-  return Math.min(FOCUS_PADDING_MAX_PX, Math.max(FOCUS_PADDING_MIN_PX, px));
+function clampPx(px, max = FOCUS_PADDING_MAX_PX) {
+  return Math.min(max, Math.max(FOCUS_PADDING_MIN_PX, px));
+}
+
+// 左右いずれかのパディングが、コンテナ幅の半分を超えないように最終クランプする
+// (超えるとfitBoundsのpadding.left+padding.right >= コンテナ幅になり"Invalid LngLat"で
+// 落ちる。焦点距離ゼロにならないよう安全マージンも引く)。
+function safeSidePadding(px, containerSizePx) {
+  const maxAllowed = Math.max(FOCUS_PADDING_MIN_PX, containerSizePx / 2 - FOCUS_PADDING_MIN_PX);
+  return Math.min(Math.max(px, FOCUS_PADDING_MIN_PX), maxAllowed);
+}
+
+let labelMeasureCtx = null;
+function measureLabelHalfWidthPx(text) {
+  if (!text) return 0;
+  if (!labelMeasureCtx) labelMeasureCtx = document.createElement("canvas").getContext("2d");
+  labelMeasureCtx.font = LABEL_FONT;
+  const textWidth = labelMeasureCtx.measureText(text).width;
+  return (textWidth + LABEL_CARD_HORIZONTAL_PADDING_PX) / 2;
 }
 
 // floor (integer, e.g. -5..10, matching "B5"-"10F") -> pillar height + label.
@@ -284,17 +311,10 @@ export async function mountShibuya3D(el, opts = {}) {
   });
 
   map.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
-  map.addControl(
-    new AttributionControl({
-      compact: false,
-      customAttribution: [
-        '地図: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
-        '店舗情報: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>(ODbL)',
-        "建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）",
-      ],
-    }),
-    "bottom-right"
-  );
+  // 出典表記(PLATEAU/地理院タイル/OSM)は、このコンポーネントを埋め込むページ側の外側フッター
+  // (渋谷マチマチではworker/src/html.jsの.attribution-footer)で一元的に表示する。地図内蔵の
+  // AttributionControlは追加しない(attributionControl:falseと合わせて二重表示を避けるため。
+  // 2026-09-24 UXレビュー対応)。埋め込み先には必ず同等の出典表記を外側に置くこと。
 
   const pinsState = { me: null, partner: null };
 
@@ -316,12 +336,32 @@ export async function mountShibuya3D(el, opts = {}) {
   function updateMarkerOffsets() {
     const zoom = map.getZoom();
     const pitchRad = (map.getPitch() * Math.PI) / 180;
+    const baseLift = {};
     for (const role of ["me", "partner"]) {
       const p = pinsState[role];
       if (!p) continue;
       const mpp = metersPerPixelAt(p.lat, zoom);
-      const pixelLift = (p.heightM / mpp) * Math.sin(pitchRad);
-      p.marker.setOffset([0, -pixelLift]);
+      baseLift[role] = (p.heightM / mpp) * Math.sin(pitchRad);
+    }
+
+    // 近接時: 2人のピンが画面上で近いと、ラベル同士が重なって両方読めなくなる。
+    // 画面奥(=projectしたy座標が小さい方、遠景)にいる側のラベルだけ追加で持ち上げて縦にずらす。
+    const extraLift = { me: 0, partner: 0 };
+    if (pinsState.me && pinsState.partner) {
+      const meScreen = map.project([pinsState.me.lng, pinsState.me.lat]);
+      const partnerScreen = map.project([pinsState.partner.lng, pinsState.partner.lat]);
+      const dx = meScreen.x - partnerScreen.x;
+      const dy = meScreen.y - partnerScreen.y;
+      if (Math.sqrt(dx * dx + dy * dy) < LABEL_STACK_DISTANCE_PX) {
+        const raiseRole = meScreen.y <= partnerScreen.y ? "me" : "partner";
+        extraLift[raiseRole] = LABEL_STACK_OFFSET_PX;
+      }
+    }
+
+    for (const role of ["me", "partner"]) {
+      const p = pinsState[role];
+      if (!p) continue;
+      p.marker.setOffset([0, -(baseLift[role] + extraLift[role])]);
     }
   }
   map.on("render", updateMarkerOffsets);
@@ -335,7 +375,7 @@ export async function mountShibuya3D(el, opts = {}) {
     const markerEl = buildLabelEl(text, color);
     const marker = new Marker({ element: markerEl, anchor: "bottom" }).setLngLat([lng, lat]).addTo(map);
 
-    pinsState[role] = { lat, lng, heightM, color, marker };
+    pinsState[role] = { lat, lng, heightM, color, marker, text };
     refreshPinsSource();
     updateMarkerOffsets();
   }
@@ -361,10 +401,15 @@ export async function mountShibuya3D(el, opts = {}) {
       north = Math.max(north, lat);
     }
     // パディングはコンテナの実サイズの比率(FOCUS_PADDING_RATIO)から計算する(理由は定数の
-    // コメント参照)。マーカーのラベルpillが左右にはみ出す分だけ、横方向にも最小限の余白を残す。
+    // コメント参照)。マーカーのラベルpillが左右にはみ出す分だけ、横方向にも最小限の余白を残す
+    // (ラベル文字幅から見積もった半分の幅を下限にする。2026-09-24 UXレビュー対応)。
     const rect = container.getBoundingClientRect();
-    const vPad = clampPx(rect.height * FOCUS_PADDING_RATIO);
-    const hPad = clampPx(rect.width * FOCUS_PADDING_RATIO);
+    const vPad = safeSidePadding(clampPx(rect.height * FOCUS_PADDING_RATIO), rect.height);
+    const labelHalfWidths = [pinsState.me?.text, pinsState.partner?.text]
+      .filter(Boolean)
+      .map(measureLabelHalfWidthPx);
+    const labelPad = labelHalfWidths.length ? clampPx(Math.max(...labelHalfWidths), FOCUS_LABEL_PADDING_MAX_PX) : 0;
+    const hPad = safeSidePadding(Math.max(clampPx(rect.width * FOCUS_PADDING_RATIO), labelPad), rect.width);
     map.fitBounds([[west, south], [east, north]], {
       padding: { top: vPad, bottom: vPad, left: hPad, right: hPad },
       pitch: DEFAULT_PITCH_DEG,

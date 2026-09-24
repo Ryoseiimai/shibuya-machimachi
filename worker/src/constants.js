@@ -24,6 +24,10 @@ export const MAX_JUDGE_CALLS = 10;
 // 位置情報が「古い」とみなされるまでの時間(ミリ秒)。UIの最終更新表示や判定の可否に使う。
 export const LOCATION_STALE_MS = 2 * 60 * 1000; // 2分
 
+// 「会えた！」ボタンを両者が押した、とみなす時間差の上限(ミリ秒)。Jevへの追加コンテキストに使う
+// (このウィンドウ内に両者の押下タイムスタンプが収まっていれば「両者が申告した」として渡す)。
+export const BOTH_PRESSED_JUDGE_WINDOW_MS = 60 * 1000; // 60秒
+
 // B5〜10Fのフロア一覧。配列のindexをそのまま高さの順序として扱う(floors.js参照)。
 export const FLOORS = [
   "B5", "B4", "B3", "B2", "B1",

@@ -31,6 +31,11 @@ const SIZE_SCALE_CONST = 2600; // 人影サイズ = SIZE_SCALE_CONST / 距離(m)
 const SIZE_MIN_PX = 26;
 const SIZE_MAX_PX = 200;
 
+// 向きセンサー(コンパス)が使えない/拒否された場合の案内文言。ブラウザ固有の設定手順
+// (「設定 > Safari > ...」等)には触れず、端末非依存の表現にする(2026-09-24 UXレビュー対応)。
+const ORIENTATION_DENIED_MESSAGE = '向きセンサーの利用が許可されませんでした。端末の設定でモーションと向きへのアクセスを許可してください。';
+const ORIENTATION_UNAVAILABLE_MESSAGE = 'この端末・ブラウザは向き(コンパス)に対応していないため、方向は表示できません。距離だけ表示します。';
+
 let styleInjected = false;
 
 function injectStyleOnce() {
@@ -54,6 +59,8 @@ function injectStyleOnce() {
 .mm-ar-arrow-left { left:10px; }
 .mm-ar-arrow-right { right:10px; }
 .mm-ar-error { position:absolute; left:10px; right:10px; bottom:10px; background:rgba(200,30,30,.94); color:#fff; padding:10px 12px; border-radius:10px; font-size:12.5px; line-height:1.6; font-family:-apple-system,"Hiragino Sans",sans-serif; white-space:pre-line; }
+.mm-ar-neutral { position:absolute; left:14px; right:14px; top:50%; transform:translateY(-50%); background:rgba(0,0,0,.62); color:#fff; padding:16px 18px; border-radius:14px; font-size:14.5px; line-height:1.7; text-align:center; font-family:-apple-system,"Hiragino Sans",sans-serif; }
+.mm-ar-neutral[hidden] { display:none; }
 `;
   document.head.appendChild(style);
 }
@@ -89,6 +96,7 @@ export function mountAR(el, config = {}) {
       </div>
       <div class="mm-ar-arrow mm-ar-arrow-left" hidden></div>
       <div class="mm-ar-arrow mm-ar-arrow-right" hidden></div>
+      <div class="mm-ar-neutral" hidden></div>
     </div>
     <div class="mm-ar-error" hidden></div>
   `;
@@ -102,6 +110,7 @@ export function mountAR(el, config = {}) {
   const floorEl = el.querySelector('.mm-ar-floor');
   const arrowLeftEl = el.querySelector('.mm-ar-arrow-left');
   const arrowRightEl = el.querySelector('.mm-ar-arrow-right');
+  const neutralEl = el.querySelector('.mm-ar-neutral');
   const errorEl = el.querySelector('.mm-ar-error');
 
   /** @type {{lat:number,lng:number,floor:number}|null} */
@@ -111,6 +120,9 @@ export function mountAR(el, config = {}) {
 
   let heading = 0; // コンパス方位(度, 0=北・時計回り)
   let betaDeg = BETA_NEUTRAL_DEG; // 前後の傾き
+  // 向き(コンパス)が使える前提で楽観的にtrueから始め、APIが無い/許可が拒否された場合だけ
+  // falseにする(=矢印・人影を出さず、距離だけの中立表示にする。item3 UXレビュー対応)。
+  let orientationAvailable = true;
 
   let stream = null;
   let rafId = null;
@@ -125,6 +137,17 @@ export function mountAR(el, config = {}) {
       : 'deviceorientation';
   }
 
+  // DeviceOrientationEvent自体が存在しない端末・ブラウザ(主にPCブラウザ)を検出する。
+  // 存在確認のみの静的判定(実際にイベントが飛んでくるかまでは見ない)。
+  function hasOrientationSupport() {
+    return typeof window !== 'undefined' && ('DeviceOrientationEvent' in window || 'ondeviceorientationabsolute' in window);
+  }
+
+  function setOrientationAvailability(available) {
+    orientationAvailable = available;
+    render();
+  }
+
   function handleOrientation(e) {
     let hdg = null;
     if (typeof e.webkitCompassHeading === 'number' && !Number.isNaN(e.webkitCompassHeading)) {
@@ -137,6 +160,7 @@ export function mountAR(el, config = {}) {
     }
     if (hdg != null) heading = hdg;
     if (typeof e.beta === 'number') betaDeg = e.beta;
+    if (!orientationAvailable) orientationAvailable = true; // 実際にイベントが来ている以上は利用可能
     render();
   }
 
@@ -213,8 +237,22 @@ export function mountAR(el, config = {}) {
     const width = el.clientWidth || 390;
     const height = el.clientHeight || 640;
 
-    const brng = bearingDegrees(me.lat, me.lng, partner.lat, partner.lng);
     const dist = distanceMeters(me.lat, me.lng, partner.lat, partner.lng);
+
+    // 向き(コンパス)が使えない/拒否された場合は、矢印・人影とも一切出さず、
+    // 「方向は分からないが距離だけは分かる」中立表示にする(2026-09-24 UXレビュー item3)。
+    // 誤った方向を示すより、何も示さない方が安全という判断。
+    if (!orientationAvailable) {
+      personEl.hidden = true;
+      arrowLeftEl.hidden = true;
+      arrowRightEl.hidden = true;
+      neutralEl.hidden = false;
+      neutralEl.textContent = `コンパスが使えないので方向は出せません。距離: ${Math.round(dist)}m`;
+      return;
+    }
+    neutralEl.hidden = true;
+
+    const brng = bearingDegrees(me.lat, me.lng, partner.lat, partner.lng);
     const rel = normalizeAngleDiff(heading, brng); // 正=相手は右, 負=相手は左
     const halfFov = fovDeg / 2;
 
@@ -284,13 +322,21 @@ export function mountAR(el, config = {}) {
     stopped = false;
     clearError();
 
-    const orientationStatus = await requestOrientationPermission();
-    if (orientationStatus === 'denied') {
-      showError(
-        '向きセンサーの利用が許可されませんでした。設定 > Safari > モーションと画面の向きへのアクセス から許可してください。'
-      );
+    let orientationStatus;
+    if (!hasOrientationSupport()) {
+      // APIそのものが無い(主にPCブラウザ)。許可を求める余地が無いので、最初から中立表示にする。
+      orientationStatus = 'unavailable';
+      showError(ORIENTATION_UNAVAILABLE_MESSAGE);
+      setOrientationAvailability(false);
     } else {
-      attachOrientationListener();
+      orientationStatus = await requestOrientationPermission();
+      if (orientationStatus === 'denied') {
+        showError(ORIENTATION_DENIED_MESSAGE);
+        setOrientationAvailability(false);
+      } else {
+        attachOrientationListener();
+        setOrientationAvailability(true);
+      }
     }
 
     let cameraStatus = 'skipped';
@@ -325,6 +371,7 @@ export function mountAR(el, config = {}) {
     personEl.hidden = true;
     arrowLeftEl.hidden = true;
     arrowRightEl.hidden = true;
+    neutralEl.hidden = true;
   }
 
   function setMe(lat, lng, floor = 1) {

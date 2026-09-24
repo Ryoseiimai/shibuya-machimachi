@@ -12,11 +12,13 @@ import {
   isActive,
   canAttemptJudge,
   recordJudgeResult,
+  recordJudgePress,
+  bothPressedRecently,
   buildPublicState,
   RoomError,
   ERROR_CODES,
 } from "../src/room.js";
-import { SHIBUYA_STATION, MAX_JUDGE_CALLS, MEET_DISTANCE_M } from "../src/constants.js";
+import { SHIBUYA_STATION, MAX_JUDGE_CALLS, MEET_DISTANCE_M, BOTH_PRESSED_JUDGE_WINDOW_MS } from "../src/constants.js";
 
 const ROOM_ID = "test-room-id";
 const NOW = 1_700_000_000_000;
@@ -255,6 +257,46 @@ test("updateLocation: accが負の数や有限でない場合はinvalid_location
   );
   const ok = updateLocation(room, { role: "host", secret: hostSecret, ...NEAR_A, now: NOW }); // acc未指定
   assert.equal(ok.accepted, true);
+});
+
+// ---- 「会えた」自己申告(押下)の記録とJevへの追加コンテキスト用フラグ ----
+test("recordJudgePress: role別に押下時刻を記録し、他のjudgeフィールドは変えない", () => {
+  const room = makeActiveRoom().room;
+  const afterHost = recordJudgePress(room, { role: "host", now: NOW });
+  assert.equal(afterHost.judge.hostPressedAt, NOW);
+  assert.equal(afterHost.judge.guestPressedAt, null);
+  assert.equal(afterHost.judge.callCount, 0);
+
+  const afterBoth = recordJudgePress(afterHost, { role: "guest", now: NOW + 1000 });
+  assert.equal(afterBoth.judge.hostPressedAt, NOW, "ホスト側の押下時刻は上書きされない");
+  assert.equal(afterBoth.judge.guestPressedAt, NOW + 1000);
+});
+
+test("bothPressedRecently: 両者の押下が60秒以内ならtrue、片方だけ/60秒超ならfalse", () => {
+  const room = makeActiveRoom().room;
+  assert.equal(bothPressedRecently(room, NOW), false, "誰も押していなければfalse");
+
+  const onlyHost = recordJudgePress(room, { role: "host", now: NOW });
+  assert.equal(bothPressedRecently(onlyHost, NOW), false, "片方だけではfalse");
+
+  const bothWithin = recordJudgePress(onlyHost, { role: "guest", now: NOW + 59_000 });
+  assert.equal(bothPressedRecently(bothWithin, NOW + 59_000), true, "59秒差ならtrue");
+
+  const bothOutside = recordJudgePress(onlyHost, { role: "guest", now: NOW + BOTH_PRESSED_JUDGE_WINDOW_MS + 1 });
+  assert.equal(
+    bothPressedRecently(bothOutside, NOW + BOTH_PRESSED_JUDGE_WINDOW_MS + 1),
+    false,
+    "60秒を超えた差はfalse",
+  );
+
+  // 押下同士が近い時刻(10秒差)でも、判定を試みた「今」から見て両方とも古ければfalse
+  // (=2人ともかなり前に押した後、しばらく経ってからゲートが通ったケースを弾く)。
+  const bothCloseButOld = recordJudgePress(onlyHost, { role: "guest", now: NOW + 10_000 });
+  assert.equal(
+    bothPressedRecently(bothCloseButOld, NOW + 5 * 60_000),
+    false,
+    "押下同士は近くても、nowから見て両方古ければfalse",
+  );
 });
 
 test("setFloor: FLOORSに無い値(B6・11F・3.5F等)はinvalid_floorで拒否される", () => {
