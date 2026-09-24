@@ -19,7 +19,10 @@ cd e2e && npm test       # Playwright: full host+guest consent flow, 2 browser c
   `host.approved` and `guest.approved` are true.
 - Do not put raw coordinates (lat/lng) in any WebSocket message, HTTP
   response, or log line — `buildPublicState()` in `worker/src/room.js` is the
-  single place allowed to decide what a viewer sees.
+  single place allowed to decide what a viewer sees. The 3D map's partner pin
+  is only a client-side approximation the *other* participant's own app
+  computes from its own GPS + the server's distance/bearing, only after both
+  sides approved — the server itself never computes/stores/logs it.
 - Do not raise the 2-person room cap or let an already-used invite token
   succeed again.
 - Do not weaken the Shibuya-area (1.5km) restriction in `worker/src/constants.js`.

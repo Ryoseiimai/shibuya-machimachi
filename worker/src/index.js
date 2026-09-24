@@ -15,12 +15,36 @@
 import { RoomDO } from "./room-do.js";
 import { randomToken } from "./room.js";
 import { APP_HTML } from "./html.js";
+import { withSecurityHeaders } from "./security-headers.js";
 
 export { RoomDO };
 
 const ROOM_ID_PATTERN = "[a-f0-9]{32}";
 const ROOM_ACTION_RE = new RegExp(`^/api/rooms/(${ROOM_ID_PATTERN})(/(?:preview|join|ws))$`);
 const ROOM_PAGE_RE = new RegExp(`^/r/(${ROOM_ID_PATTERN})$`);
+
+// 部屋作成のレート制限(H3): 同一IP(をハッシュ化した値)につき1分5回まで。
+// wrangler.tomlの[[ratelimits]](binding名 ROOM_CREATE_LIMITER)で設定する。
+const ROOM_CREATE_RATE_LIMIT_MESSAGE = "しばらく時間をおいてから、もう一度お試しください。";
+
+// cf-connecting-ipそのものをレートリミッタのキーやログに残さないようにSHA-256でハッシュ化する。
+// Workers Runtime・Node.js 20+のどちらもWeb Crypto(globalThis.crypto.subtle)を持つ。
+export async function hashClientIp(ip) {
+  const data = new TextEncoder().encode(ip || "unknown");
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// 意図的な簡略化: env.ROOM_CREATE_LIMITER(Rate Limiting binding)が存在しない環境
+// (bindingを構成していないローカル実行・単体テストのfake env等)ではレート制限を素通しする。
+// 本番のwrangler.tomlには必ずbindingを定義してあるので、ここに来るのは開発/テスト時のみ。
+export async function isRateLimited(env, key) {
+  if (!env.ROOM_CREATE_LIMITER || typeof env.ROOM_CREATE_LIMITER.limit !== "function") return false;
+  const { success } = await env.ROOM_CREATE_LIMITER.limit({ key });
+  return !success;
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -43,6 +67,12 @@ async function forwardToRoom(env, roomId, path, request) {
 }
 
 async function handleCreateRoom(request, env) {
+  const ip = request.headers.get("cf-connecting-ip") || "unknown";
+  const key = await hashClientIp(ip);
+  if (await isRateLimited(env, key)) {
+    return json({ ok: false, reason: "rate_limited", message: ROOM_CREATE_RATE_LIMIT_MESSAGE }, 429);
+  }
+
   const body = await request.json().catch(() => null);
   if (!body || typeof body.nickname !== "string" || !body.nickname.trim()) {
     return json({ ok: false, reason: "invalid_nickname" }, 400);
@@ -57,25 +87,32 @@ async function handleCreateRoom(request, env) {
   return stub.fetch(initRequest);
 }
 
+async function route(request, env) {
+  const url = new URL(request.url);
+
+  if (url.pathname === "/api/rooms" && request.method === "POST") {
+    return handleCreateRoom(request, env);
+  }
+
+  const roomMatch = url.pathname.match(ROOM_ACTION_RE);
+  if (roomMatch) {
+    const roomId = roomMatch[1];
+    const action = roomMatch[2];
+    return forwardToRoom(env, roomId, action, request);
+  }
+
+  if (request.method === "GET" && (url.pathname === "/" || ROOM_PAGE_RE.test(url.pathname))) {
+    return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+
+  return json({ error: "not found" }, 404);
+}
+
 export default {
+  // セキュリティヘッダ(H1/M5)はここで一元的に付与する。WebSocketアップグレード(101)は
+  // withSecurityHeaders内部で素通しされる。
   async fetch(request, env) {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/api/rooms" && request.method === "POST") {
-      return handleCreateRoom(request, env);
-    }
-
-    const roomMatch = url.pathname.match(ROOM_ACTION_RE);
-    if (roomMatch) {
-      const roomId = roomMatch[1];
-      const action = roomMatch[2];
-      return forwardToRoom(env, roomId, action, request);
-    }
-
-    if (request.method === "GET" && (url.pathname === "/" || ROOM_PAGE_RE.test(url.pathname))) {
-      return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
-    }
-
-    return json({ error: "not found" }, 404);
+    const response = await route(request, env);
+    return withSecurityHeaders(response);
   },
 };

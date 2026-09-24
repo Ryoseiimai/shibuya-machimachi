@@ -1,10 +1,29 @@
-# Cloudflare Workers Static Assets(Pages互換の_headers形式)で配信するキャッシュ設定。
-# 3D/AR部品のJSモジュールと地図データ(GeoJSON)は内容が変わらない限り再取得不要なので、
-# 長期キャッシュ(1年・immutable)を効かせる。実際のgzip/br圧縮自体はCloudflareのエッジが
-# リクエストのAccept-Encodingに応じて自動で行う(このファイルは圧縮の有効/無効ではなく
-# キャッシュ有効期間の設定)。ファイル名にコンテンツハッシュを含めていないため、中身を
-# 変更して配信し直す場合、キャッシュ済みの古い版を最大1年間持ち続けるクライアントが
-# 出る点に注意(意図的な簡略化。本格的なキャッシュバスティングが要る場合はファイル名への
-# ハッシュ付与が入口)。
+# Cloudflare Workers Static Assets(Pages互換の_headers形式)で配信するキャッシュ設定+
+# セキュリティヘッダ。/assets/* はWorkerのfetchハンドラを経由せず直接配信されるため
+# (worker/src/index.jsのwithSecurityHeadersが効かない)、同じヘッダをここにも書く。
+# CSP文字列は worker/src/security-headers.js の CONTENT_SECURITY_POLICY と完全一致させること
+# (worker/test/security-headers.test.js がズレを検出する)。
+#
+# キャッシュ設定について: 3D/AR部品のJSモジュールと地図データ(GeoJSON)は内容が変わらない限り
+# 再取得不要なので、長期キャッシュ(1年・immutable)を効かせる。実際のgzip/br圧縮自体は
+# CloudflareのエッジがリクエストのAccept-Encodingに応じて自動で行う(このファイルは圧縮の
+# 有効/無効ではなくキャッシュ有効期間の設定)。ファイル名にコンテンツハッシュを含めていないため、
+# 中身を変更して配信し直す場合、キャッシュ済みの古い版を最大1年間持ち続けるクライアントが出る点に
+# 注意(意図的な簡略化。本格的なキャッシュバスティングが要る場合はファイル名へのハッシュ付与が入口)。
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: geolocation=(self), camera=(self)
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cyberjapandata.gsi.go.jp; connect-src 'self' https://cyberjapandata.gsi.go.jp; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: geolocation=(self), camera=(self)
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cyberjapandata.gsi.go.jp; connect-src 'self' https://cyberjapandata.gsi.go.jp; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

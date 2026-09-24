@@ -14,6 +14,13 @@ binding = "ASSETS"
 name = "ROOM_DO"
 class_name = "RoomDO"
 
+# 部屋作成(POST /api/rooms)のレート制限(H3セキュリティ対応)。cf-connecting-ipをハッシュ化
+# した値をキーに、1分あたり5回まで。namespace_idはこのWorker内で一意ならなんでもよい値。
+[[ratelimits]]
+name = "ROOM_CREATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomDO"] # SQLiteバックエンド。Workers Freeプランで利用できる

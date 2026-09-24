@@ -74,10 +74,6 @@ const SILHOUETTE_SVG = `
 export function mountAR(el, config = {}) {
   if (!el) throw new Error('mountAR(el): el が必要です');
   const fovDeg = config.fovDeg || DEFAULT_FOV_DEGREES;
-  // デバッグ/自動テスト専用フラグ。trueにするとiOS専用の許可API呼び出し(requestOrientationPermission)を
-  // スキップして常に向きセンサーのリスナーを購読する。実機iPhoneでは絶対に使わないこと
-  // （本番では必ず通常フローでユーザーに許可を求める。demo.htmlのデバッグモードでのみ使用）。
-  const forceOrientationListener = !!config.forceOrientationListener;
 
   injectStyleOnce();
   el.classList.add('mm-ar-root');
@@ -288,21 +284,13 @@ export function mountAR(el, config = {}) {
     stopped = false;
     clearError();
 
-    let orientationStatus;
-    if (forceOrientationListener) {
-      // デバッグモードではmountAR()呼び出し時点で既にリスナーを購読済み（start前でもスライダーが効くように）。
-      // attachOrientationListener()は冪等なので、stop()後の再startでも安全に呼び直せる。
-      attachOrientationListener();
-      orientationStatus = 'debug-forced';
+    const orientationStatus = await requestOrientationPermission();
+    if (orientationStatus === 'denied') {
+      showError(
+        '向きセンサーの利用が許可されませんでした。設定 > Safari > モーションと画面の向きへのアクセス から許可してください。'
+      );
     } else {
-      orientationStatus = await requestOrientationPermission();
-      if (orientationStatus === 'denied') {
-        showError(
-          '向きセンサーの利用が許可されませんでした。設定 > Safari > モーションと画面の向きへのアクセス から許可してください。'
-        );
-      } else {
-        attachOrientationListener();
-      }
+      attachOrientationListener();
     }
 
     let cameraStatus = 'skipped';
@@ -347,12 +335,6 @@ export function mountAR(el, config = {}) {
   function setPartner(lat, lng, floor = 1, name = '相手') {
     partner = { lat, lng, floor, name };
     render();
-  }
-
-  if (forceOrientationListener) {
-    // デバッグモード: start()を待たずマウント直後から購読しておく。
-    // これによりデモのスライダー操作が「①ARを開始」を押す前後どちらでも即座に反映される。
-    attachOrientationListener();
   }
 
   return { start, stop, setMe, setPartner };

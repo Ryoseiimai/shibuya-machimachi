@@ -13,7 +13,7 @@
  *      意図的な簡略化: 承認前の位置は一切保存しない(サーバー側もゼロ知識に保つ)。
  *      「本人の合意なく位置を溜め込まない」を優先し、承認後に届いた位置だけを保持する設計。
  */
-import { distanceMeters, bearingDegrees, isWithinRadius } from "./geo.js";
+import { distanceMeters, bearingDegrees, isWithinRadius, isValidCoordinate } from "./geo.js";
 import { floorDiffLabel, isValidFloor, sameFloor } from "./floors.js";
 import {
   SHIBUYA_STATION,
@@ -55,12 +55,23 @@ function clone(room) {
   return structuredClone(room);
 }
 
+// C0(\u0000-\u001F)・DEL(\u007F)・C1(\u0080-\u009F)制御文字を除去する(M4セキュリティ対応)。
+// 除去後に空/上限超になる場合は通常のinvalid_nicknameとして弾く。
+function stripControlCharacters(raw) {
+  return raw.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+}
+
 function assertNickname(nickname) {
-  const trimmed = typeof nickname === "string" ? nickname.trim() : "";
+  const trimmed = typeof nickname === "string" ? stripControlCharacters(nickname).trim() : "";
   if (!trimmed || trimmed.length > MAX_NICKNAME_LEN) {
     throw new RoomError(ERROR_CODES.INVALID_NICKNAME, "ニックネームは1〜20文字で入力してください");
   }
   return trimmed;
+}
+
+// GPSのaccuracy(メートル)は未指定(null/undefined)を許すが、指定されるなら有限の0以上
+function isValidAccuracy(acc) {
+  return acc === undefined || acc === null || (typeof acc === "number" && Number.isFinite(acc) && acc >= 0);
 }
 
 function newParticipant(nickname, { approved }) {
@@ -172,7 +183,7 @@ export function updateLocation(room, { role, secret, lat, lng, acc, now = Date.n
   if (!authenticate(room, role, secret)) throw new RoomError(ERROR_CODES.UNAUTHORIZED);
   if (room.stopped) return { room, accepted: false, reason: ERROR_CODES.STOPPED };
   if (!isActive(room, now)) return { room, accepted: false, reason: ERROR_CODES.NOT_ACTIVE };
-  if (typeof lat !== "number" || typeof lng !== "number" || Number.isNaN(lat) || Number.isNaN(lng)) {
+  if (!isValidCoordinate(lat, lng) || !isValidAccuracy(acc)) {
     throw new RoomError(ERROR_CODES.INVALID_LOCATION, "位置情報が不正です");
   }
 

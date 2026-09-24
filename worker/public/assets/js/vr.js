@@ -8,8 +8,11 @@
 //   その後の実際の首振り(センサー追従)には対応していない（既知の限界）。
 // - 他人の検出・顔認識などは一切行わない。方向の目印としてダミーの人型を置くだけ。
 
-const THREE_VERSION = '0.169.0';
-const THREE_BASE = `https://cdn.jsdelivr.net/npm/three@${THREE_VERSION}`;
+// three.js は自ホストのvendorコピーを使う(2026-09-24 CDN依存排除。npmの取得元・版数は
+// worker/package.json の devDependencies と public/vendor/three/VERSION.txt を参照)。
+const THREE_MODULE_URL = new URL('../../vendor/three/three.module.js', import.meta.url).href;
+const AR_BUTTON_URL = new URL('../../vendor/three/webxr/ARButton.js', import.meta.url).href;
+const VR_BUTTON_URL = new URL('../../vendor/three/webxr/VRButton.js', import.meta.url).href;
 
 function isDefinitelyUnsupportedPlatform() {
   const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
@@ -43,7 +46,7 @@ export async function isVrAvailable() {
  * @param {number} distanceM 相手までの距離(m)
  */
 export async function startVrScene(container, mode, relativeBearingDeg, distanceM) {
-  const THREE = await import(/* webpackIgnore: true */ `${THREE_BASE}/build/three.module.js`);
+  const THREE = await import(/* webpackIgnore: true */ THREE_MODULE_URL);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(
@@ -83,7 +86,7 @@ export async function startVrScene(container, mode, relativeBearingDeg, distance
   try {
     const moduleName = mode === 'immersive-ar' ? 'ARButton' : 'VRButton';
     const mod = await import(
-      /* webpackIgnore: true */ `${THREE_BASE}/examples/jsm/webxr/${moduleName}.js`
+      /* webpackIgnore: true */ mode === 'immersive-ar' ? AR_BUTTON_URL : VR_BUTTON_URL
     );
     button = mod[moduleName].createButton(renderer, { requiredFeatures: [] });
     document.body.appendChild(button);

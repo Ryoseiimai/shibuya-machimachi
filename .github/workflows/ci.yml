@@ -30,5 +30,11 @@ jobs:
           node --check src/room-do.js
           node --check src/html.js
           node --check src/constants.js
+          node --check src/security-headers.js
+          node --check public/assets/js/app.js
+          node --check public/assets/js/ar.js
+          node --check public/assets/js/vr.js
+          node --check public/assets/js/geo.js
+          node --check public/assets/js/shibuya3d.mjs
       - name: Unit tests (room state machine / geo / floors / jev)
         run: npm test
