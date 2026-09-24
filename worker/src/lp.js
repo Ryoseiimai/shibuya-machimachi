@@ -9,11 +9,26 @@
  * OGP画像URL・og:urlは本番の固定ドメインを直接埋め込む。プレビューURLやローカルの
  * `wrangler dev`のオリジンに依存させず、SNSのリンクカードは常に本番URLを指すべきという判断。
  */
+import { Parser, jaModel } from "budoux";
+
 const PROD_ORIGIN = "https://shibuya-machimachi.kaeru3160.workers.dev";
 const OGP_IMAGE_URL = `${PROD_ORIGIN}/lp/ogp.png`;
 const PAGE_TITLE = "渋谷マチマチ｜渋谷で迷わず会える1対1の待ち合わせ";
 const PAGE_DESCRIPTION =
   "渋谷駅から半径1.5km限定、お互いに承認した2人だけで距離と方角を共有する待ち合わせアプリ。登録不要・無料。オープンソース。";
+
+/**
+ * 見出し・本文の日本語テキストをBudouX(Google製の文節分割ライブラリ)で文節ごとに区切り、
+ * 区切り目に<wbr>を挿入するヘルパー。「文節の途中で改行され、助詞や句読点(？で終わる文の
+ * ？だけ、「〜される」の「る」だけ等)が次行に孤立する」問題を、手作業の<wbr>配置に頼らず
+ * 機械的に防ぐ。Parser/jaModelはモジュール読み込み時(Workerのisolate起動時)に1回だけ
+ * インスタンス化し、LP_HTML自体も同じタイミングで1回だけ組み立てられるので、リクエストの
+ * たびに再計算はしない。プレーンな日本語テキストにのみ使うこと(BudouXの分割モデルは1文字
+ * ずつのスコアリングでHTMLタグを想定していないため、<span>等を含む文字列を渡すとタグの
+ * 文字自体を区切り対象にしてしまう。タグを含む箇所はタグの外側のテキストだけを渡す)。
+ */
+const jaParser = new Parser(jaModel);
+const wbr = (text) => jaParser.parse(text).join("<wbr>");
 
 export const LP_HTML = String.raw`<!DOCTYPE html>
 <html lang="ja">
@@ -51,12 +66,16 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
   body {
     font-family: -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
     background: #ffffff; color: var(--ink); line-height: 1.75; font-size: 16px;
+    /* word-break/overflow-wrapは継承されるので、ページ全体の見出し・本文がここで
+       まとめて「文節の途中では改行しない(keep-all)。それでも収まらない時だけ最後の
+       手段としてどこでも折り返す(anywhere)」の対象になる。 */
+    word-break: keep-all; overflow-wrap: anywhere;
   }
   img { max-width: 100%; display: block; }
   a { color: inherit; }
   .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
   section { padding: 56px 0; }
-  h1, h2 { word-break: keep-all; overflow-wrap: break-word; line-height: 1.45; margin: 0; }
+  h1, h2 { line-height: 1.45; margin: 0; }
   .kicker {
     display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800;
     color: var(--brand-orange-on-soft); background: var(--brand-orange-soft-bg);
@@ -81,10 +100,12 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
   }
   .hero .sub .brand { color: var(--brand-orange); }
   .cta-btn {
-    display: inline-block; font-size: 18px; font-weight: 800; padding: 16px 28px;
+    display: inline-flex; flex-direction: column; align-items: center; gap: 4px;
+    font-size: 18px; font-weight: 800; padding: 16px 28px;
     border-radius: 16px; background: var(--brand-orange); color: #fff; text-decoration: none;
-    box-shadow: 0 10px 24px rgba(200,67,31,0.28); word-break: keep-all; overflow-wrap: break-word;
+    box-shadow: 0 10px 24px rgba(200,67,31,0.28);
   }
+  .cta-btn-note { font-size: 13px; font-weight: 700; }
   .cta-note { font-size: 13px; color: var(--muted-text); margin-top: 12px; }
   .hero-shot {
     border-radius: 22px; border: 1px solid var(--border-soft);
@@ -114,7 +135,7 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
     display: flex; align-items: center; justify-content: center;
   }
   .feature-icon svg { width: 24px; height: 24px; color: var(--ink); }
-  .feature-title { font-weight: 800; font-size: 16px; margin: 0 0 4px; word-break: keep-all; overflow-wrap: break-word; }
+  .feature-title { font-weight: 800; font-size: 16px; margin: 0 0 4px; }
   .feature-desc { font-size: 14px; color: var(--muted-text); margin: 0; }
   .features-shot-wrap { margin-top: 36px; text-align: center; }
   .features-shot {
@@ -172,10 +193,10 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
   <div class="wrap">
     <div class="copy">
       <span class="kicker">渋谷駅から1.5km限定・無料</span>
-      <h1>今日、<wbr>渋谷の待ち合わせで<wbr>困ったから<wbr>作りました。</h1>
-      <p class="sub"><span class="brand">渋谷マチマチ</span> — <wbr>お互いに承認した2人だけで、<wbr>渋谷で<wbr>迷わず会える</p>
-      <a class="cta-btn" href="/new">待ち合わせを作る<wbr>（無料・登録なし）</a>
-      <p class="cta-note">ニックネームだけで今すぐ使えます。アカウント登録は不要です。</p>
+      <h1>${wbr("今日、渋谷の待ち合わせで困ったから作りました。")}</h1>
+      <p class="sub"><span class="brand">渋谷マチマチ</span> — ${wbr("お互いに承認した2人だけで、渋谷で迷わず会える")}</p>
+      <a class="cta-btn" href="/new"><span class="cta-btn-main">待ち合わせを作る</span><span class="cta-btn-note">（無料・登録なし）</span></a>
+      <p class="cta-note">${wbr("ニックネームだけで今すぐ使えます。アカウント登録は不要です。")}</p>
     </div>
     <div class="shot-col">
       <img class="hero-shot" src="/lp/top-390.png" srcset="/lp/top-240.png 240w, /lp/top-390.png 390w" sizes="(min-width: 780px) 300px, 70vw" width="390" height="844" alt="渋谷マチマチのアプリ画面。相手までの距離155mと方角の矢印が表示されている" loading="lazy">
@@ -185,10 +206,10 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
 
 <section class="pain">
   <div class="wrap">
-    <h2 class="section-heading">渋谷の待ち合わせ、<wbr>こんなことになっていませんか？</h2>
+    <h2 class="section-heading">${wbr("渋谷の待ち合わせ、こんなことになっていませんか？")}</h2>
     <ul class="pain-list">
-      <li>渋谷駅は地下も上もあって、「どこ？」「何階？」を何度もやり取りすることになる。</li>
-      <li>地図アプリで位置を送っても、相手が今どこにいるのかは結局よくわからない。</li>
+      <li>${wbr("渋谷駅は地下も上もあって、「どこ？」「何階？」を何度もやり取りすることになる。")}</li>
+      <li>${wbr("地図アプリで位置を送っても、相手が今どこにいるのかは結局よくわからない。")}</li>
     </ul>
   </div>
 </section>
@@ -200,43 +221,43 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
       <li class="feature-item">
         <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7l3 8-3-2-3 2z" fill="currentColor" stroke="none"/></svg></span>
         <span>
-          <p class="feature-title">距離と矢印</p>
-          <p class="feature-desc">相手までの距離と方角が、リアルタイムの矢印でわかる。</p>
+          <p class="feature-title">${wbr("距離と矢印")}</p>
+          <p class="feature-desc">${wbr("相手までの距離と方角が、リアルタイムの矢印でわかる。")}</p>
         </span>
       </li>
       <li class="feature-item">
         <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21V3M8 3L5 6M8 3l3 3"/><path d="M16 3v18M16 21l-3-3M16 21l3-3"/></svg></span>
         <span>
-          <p class="feature-title">階の差（上とか下とか）</p>
-          <p class="feature-desc">同じ渋谷でも「相手は2つ上の階」までわかる。</p>
+          <p class="feature-title">${wbr("階の差（上とか下とか）")}</p>
+          <p class="feature-desc">${wbr("同じ渋谷でも「相手は2つ上の階」までわかる。")}</p>
         </span>
       </li>
       <li class="feature-item">
         <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3a3.4 3.4 0 0 0-3.4 3.4c0 2.5 3.4 6.6 3.4 6.6s3.4-4.1 3.4-6.6A3.4 3.4 0 0 0 7 3z"/><path d="M17 9a2.6 2.6 0 0 0-2.6 2.6c0 1.9 2.6 5 2.6 5s2.6-3.1 2.6-5A2.6 2.6 0 0 0 17 9z"/></svg></span>
         <span>
-          <p class="feature-title">3D渋谷（PLATEAU）で<wbr>お互いのピン</p>
-          <p class="feature-desc">国交省PLATEAUの3D地図に、自分と相手のピンが一緒に立つ。</p>
+          <p class="feature-title">${wbr("3D渋谷（PLATEAU）でお互いのピン")}</p>
+          <p class="feature-desc">${wbr("国交省PLATEAUの3D地図に、自分と相手のピンが一緒に立つ。")}</p>
         </span>
       </li>
       <li class="feature-item">
         <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9l1-5h14l1 5"/><rect x="5" y="9" width="14" height="11" rx="1"/><rect x="10" y="14" width="4" height="6"/></svg></span>
         <span>
-          <p class="feature-title">相手の近くのお店</p>
-          <p class="feature-desc">相手の位置から近い順にお店が3件表示される。</p>
+          <p class="feature-title">${wbr("相手の近くのお店")}</p>
+          <p class="feature-desc">${wbr("相手の位置から近い順にお店が3件表示される。")}</p>
         </span>
       </li>
       <li class="feature-item">
         <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7l2-3h4l2 3"/><circle cx="12" cy="13.5" r="3.4"/></svg></span>
         <span>
-          <p class="feature-title">カメラ越しに相手の人影（AR）</p>
-          <p class="feature-desc">ARモードでカメラ越しに、相手がいる方向を人影で示す。</p>
+          <p class="feature-title">${wbr("カメラ越しに相手の人影（AR）")}</p>
+          <p class="feature-desc">${wbr("ARモードでカメラ越しに、相手がいる方向を人影で示す。")}</p>
         </span>
       </li>
       <li class="feature-item">
         <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.3l2.6 2.6L16 9"/></svg></span>
         <span>
-          <p class="feature-title">「会えた？」をAI（Jev）が判定</p>
-          <p class="feature-desc">距離・同じ階かどうか・経過時間から、その場で判定する。</p>
+          <p class="feature-title">${wbr("「会えた？」をAI（Jev）が判定")}</p>
+          <p class="feature-desc">${wbr("距離・同じ階かどうか・経過時間から、その場で判定する。")}</p>
         </span>
       </li>
     </ul>
@@ -250,12 +271,12 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
   <div class="wrap">
     <h2 class="section-heading">安心して使えるための設計</h2>
     <ul class="trust-list">
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>承認した2人だけに位置が届く</li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>招待リンクは1回きりで無効になる</li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>どちらかが押せば、いつでも即座に停止できる</li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>待ち合わせは3時間で自動的に削除される</li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>渋谷駅から1.5km以内でだけ使える</li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>位置情報はサーバーのログに残さない</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>${wbr("承認した2人だけに位置が届く")}</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>${wbr("招待リンクは1回きりで無効になる")}</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>${wbr("どちらかが押せば、いつでも即座に停止できる")}</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>${wbr("待ち合わせは3時間で自動的に削除される")}</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>${wbr("渋谷駅から1.5km以内でだけ使える")}</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>${wbr("位置情報はサーバーのログに残さない")}</li>
     </ul>
   </div>
 </section>
@@ -267,17 +288,17 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
       <li>
         <div class="step-num">1</div>
         <p class="step-title">作る</p>
-        <p class="step-desc">ニックネームだけで待ち合わせを作成。</p>
+        <p class="step-desc">${wbr("ニックネームだけで待ち合わせを作成。")}</p>
       </li>
       <li>
         <div class="step-num">2</div>
         <p class="step-title">招待リンクを送る</p>
-        <p class="step-desc">LINEや共有ボタンで、会う相手にそのまま送る。</p>
+        <p class="step-desc">${wbr("LINEや共有ボタンで、会う相手にそのまま送る。")}</p>
       </li>
       <li>
         <div class="step-num">3</div>
         <p class="step-title">お互い承認して会いに行く</p>
-        <p class="step-desc">両方が承認した瞬間から、距離と方角が届き始める。</p>
+        <p class="step-desc">${wbr("両方が承認した瞬間から、距離と方角が届き始める。")}</p>
       </li>
     </ol>
   </div>
@@ -285,8 +306,8 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
 
 <section class="oss">
   <div class="wrap">
-    <h2 class="section-heading" style="border-left:none;padding-left:0;">オープンソースです。<wbr>一緒に作ろう</h2>
-    <p>渋谷マチマチのコードは全部公開しています。バグ報告・機能追加・翻訳など、Issue・PRお待ちしています。初心者向けの good first issue もあります。</p>
+    <h2 class="section-heading" style="border-left:none;padding-left:0;">${wbr("オープンソースです。一緒に作ろう")}</h2>
+    <p>${wbr("渋谷マチマチのコードは全部公開しています。バグ報告・機能追加・翻訳など、Issue・PRお待ちしています。初心者向けの good first issue もあります。")}</p>
     <a class="oss-btn" href="https://github.com/Ryoseiimai/shibuya-machimachi">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 6 2 12 8 18"/><polyline points="16 6 22 12 16 18"/></svg>
       GitHubで見る
@@ -296,7 +317,7 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
 
 <section class="closing-cta">
   <div class="wrap">
-    <a class="cta-btn" href="/new">待ち合わせを作る<wbr>（無料・登録なし）</a>
+    <a class="cta-btn" href="/new"><span class="cta-btn-main">待ち合わせを作る</span><span class="cta-btn-note">（無料・登録なし）</span></a>
   </div>
 </section>
 

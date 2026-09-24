@@ -8,8 +8,11 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "wrangler": "^4.126.0",
     "maplibre-gl": "6.11.1",
-    "three": "0.169.0"
+    "three": "0.169.0",
+    "wrangler": "^4.126.0"
+  },
+  "dependencies": {
+    "budoux": "^0.9.2"
   }
 }
