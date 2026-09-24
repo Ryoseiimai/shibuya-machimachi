@@ -8,12 +8,25 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./tests",
-  timeout: 30_000,
+  // 60秒(元は30秒): 3D渋谷がMapLibre GL JS本体をjsdelivr CDNから取得するステップを含むため、
+  // 初回・低速回線での余裕を持たせる(以後の`toPass`個別timeoutは変更していない)。
+  timeout: 60_000,
   fullyParallel: false,
   retries: 0,
   reporter: [["list"]],
   use: {
     baseURL: BASE_URL,
+    // 3D渋谷(MapLibre GL/WebGL)とAR(getUserMedia)をヘッドレスChromiumで動かすためのフラグ。
+    // --use-gl=swiftshader: GPUのないCI/サンドボックス環境でもソフトウェアレンダリングでWebGLを有効にする。
+    // --use-fake-ui-for-media-stream / --use-fake-device-for-media-stream: カメラ許可ダイアログを
+    // 出さずに合成のダミー映像デバイスを使う(実カメラ映像は一切扱わない)。
+    launchOptions: {
+      args: [
+        "--use-gl=swiftshader",
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+      ],
+    },
   },
   webServer: {
     command: `npx wrangler dev --port ${PORT} --local`,

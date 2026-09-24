@@ -30,3 +30,13 @@ export function floorDiffLabel(myFloor, otherFloor) {
 export function sameFloor(myFloor, otherFloor) {
   return floorDiff(myFloor, otherFloor) === 0;
 }
+
+// "B5"〜"10F"のフロア表記を整数(-5〜10, 0は無し)に変換する。3D渋谷・AR部品(共に
+// worker/public/assets/js/配下の別リポジトリ由来コード)が「階」を整数で受け取る
+// API(setMe/setPartner の floor 引数)になっているためのブリッジ。
+// クライアント側(html.jsのインラインscript)はサーバー側モジュールをimportできないため、
+// 同じロジックを client 側にも複製している(html.js の floorLabelToInt を参照)。
+export function floorLabelToInt(floorLabel) {
+  if (!isValidFloor(floorLabel)) return null;
+  return floorLabel.charAt(0) === "B" ? -Number(floorLabel.slice(1)) : Number(floorLabel.slice(0, -1));
+}

@@ -2,6 +2,14 @@ name = "shibuya-machimachi"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+# 3D/AR部品のJSモジュールと地図データ(GeoJSON)を配信する静的アセット。
+# /assets/* はWorkerのfetchハンドラを経由せず直接配信される(index.jsのルーティングと
+# 衝突しない)。ローカルの`wrangler dev`でも同じディレクトリからそのまま配信される。
+# キャッシュ設定は public/_headers (Pages互換の_headers形式) を参照。
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
 [[durable_objects.bindings]]
 name = "ROOM_DO"
 class_name = "RoomDO"

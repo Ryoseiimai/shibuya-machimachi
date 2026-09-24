@@ -73,18 +73,40 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     background: #fff1cc; color: #7a5b00; padding: 12px 14px; border-radius: 12px;
     font-size: 14px; font-weight: 700; margin-bottom: 14px;
   }
-  .future-slot {
-    border: 2px dashed #e8d9cc; border-radius: 14px; padding: 16px; margin-bottom: 12px;
-    text-align: center; color: #b3a296;
-  }
-  .future-slot-label { font-weight: 800; font-size: 14px; color: #8a7a70; }
-  .future-slot-body { font-size: 12px; margin-top: 4px; }
+  .block-label { font-weight: 800; font-size: 14px; color: #8a7a70; margin-bottom: 10px; }
   #judge-box { text-align: center; margin: 14px 0; }
   #judge-status { font-size: 20px; font-weight: 800; padding: 10px; border-radius: 12px; background: #f4ede6; }
   #judge-status.found { background: #ff5a3c; color: #fff; }
   #judge-note { font-size: 13px; color: #9a8b80; margin-top: 6px; }
   .floor-diff { text-align: center; font-size: 15px; font-weight: 700; margin-top: 6px; }
   .updated-at { text-align: center; font-size: 12px; color: #9a8b80; margin-top: 4px; }
+  .shops-list { list-style: none; margin: 0; padding: 0; }
+  .shops-list li {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    padding: 9px 2px; border-bottom: 1px solid #f0e6dc; font-size: 14px;
+  }
+  .shops-list li:last-child { border-bottom: none; }
+  .shop-name { font-weight: 700; color: #2a2222; }
+  .shop-meta { color: #9a8b80; font-size: 12px; white-space: nowrap; }
+  .floor-tag {
+    display: inline-block; background: #ffe6db; color: #ff5a3c; border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: 700; margin-left: 6px;
+  }
+  .map3d { width: 100%; height: 280px; border-radius: 14px; overflow: hidden; background: #e9eef1; position: relative; }
+  .attribution-footer { font-size: 11px; color: #b3a296; text-align: center; margin: 4px 0 14px; line-height: 1.5; }
+  .ar-fullscreen { position: fixed; inset: 0; background: #000; z-index: 1000; }
+  .ar-fullscreen[hidden] { display: none; }
+  #ar-mount { position: absolute; inset: 0; }
+  .ar-close-btn {
+    position: absolute; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 14px;
+    width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.55);
+    color: #fff; font-size: 18px; border: none; z-index: 20;
+  }
+  .ar-vr-btn {
+    position: absolute; left: 14px; right: 14px; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+    background: rgba(30,30,34,0.85); color: #fff; border: none; border-radius: 12px;
+    padding: 12px; font-size: 13px; font-weight: 700; z-index: 20;
+  }
 </style>
 </head>
 <body>
@@ -184,14 +206,17 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
       </select>
       <div class="floor-diff" id="floor-diff-text"></div>
     </div>
-    <div class="future-slot" id="slot-shops">
-      <div class="future-slot-label">近くのお店</div>
-      <div class="future-slot-body">後日追加予定</div>
+    <div class="card" id="slot-shops">
+      <div class="block-label">近くのお店</div>
+      <ul class="shops-list" id="shops-list"></ul>
+      <p class="hint" id="shops-empty">相手の位置と階が分かると表示されます。</p>
     </div>
-    <div class="future-slot" id="slot-3d">
-      <div class="future-slot-label">3D渋谷</div>
-      <div class="future-slot-body">後日追加予定</div>
+    <div class="card" id="slot-3d">
+      <div class="block-label">3D渋谷</div>
+      <div class="map3d" id="map3d"></div>
+      <button type="button" id="ar-open-btn" class="secondary" style="margin-top:10px;" disabled>ARで探す(読み込み中…)</button>
     </div>
+    <div class="attribution-footer">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）／地図: 地理院タイル／店舗: © OpenStreetMap contributors (ODbL)</div>
     <div class="card">
       <div id="judge-box">
         <div id="judge-status">未確認</div>
@@ -205,6 +230,12 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
   </section>
 
 </main>
+
+<div class="ar-fullscreen" id="ar-fullscreen" hidden>
+  <div id="ar-mount"></div>
+  <button type="button" class="ar-close-btn" id="ar-close-btn" aria-label="閉じる">✕</button>
+  <button type="button" class="ar-vr-btn" id="ar-vr-btn" style="display:none;">VRメガネで見る(実験的・対応端末のみ)</button>
+</div>
 
 <script>
 (function () {
@@ -230,6 +261,30 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
   var ws = null;
   var lastState = null;
   var heading = 0;
+
+  // --- 3D渋谷・近くのお店・AR(組み込み部品)---
+  // 重要: 相手の生座標(lat/lng)はサーバーから一切送られてこない
+  // (buildPublicState()が返すのはdistance_m/bearing_degだけ。AGENTS.md/SECURITY.mdの
+  // 非交渉ルール)。3D地図の相手ピンとARの矢印・人影が使う「相手の推定座標」は、
+  // 自分の実座標(selfPos, 自分のGPSから取得)にサーバーから届いたdistance_m/bearing_degを
+  // destinationPoint(AR部品のgeo.js)で適用し、画面内だけで復元したもの。既にサーバーが
+  // 送ってよいと決めている情報(距離・方位)だけから作っているので、この復元によって
+  // サーバー側の非交渉ルールを回避しているわけではない。
+  var ASSETS_JS_BASE = "/assets/js/";
+  var selfPos = null;
+  var extrasState = {
+    shibuya3dModPromise: null, shibuya3dPromise: null, shibuya3d: null, nearestShops: null,
+    arPromise: null, ar: null, focused: false, vrChecked: false,
+  };
+
+  // worker/src/floors.js の floorLabelToInt と同じロジック(クライアントはサーバー側の
+  // モジュールをimportできないため、ここに複製している)。"B5"→-5, "1F"→1, "10F"→10。
+  function floorLabelToInt(label) {
+    if (typeof label !== "string" || !label) return null;
+    if (label.charAt(0) === "B") return -parseInt(label.slice(1), 10);
+    var n = parseInt(label, 10);
+    return isNaN(n) ? null : n;
+  }
 
   function storageKey(roomId, field) { return "sm:" + roomId + ":" + field; }
   function saveSession(roomId, role, secret) {
@@ -296,8 +351,17 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     }
   }
 
+  var extrasBooted = false;
   function renderMeet(state) {
     document.getElementById("meet-other-name").textContent = state.other ? state.other.nickname : "相手";
+
+    if (!extrasBooted) {
+      // 3D/AR部品はサイズが大きい(地図データ含め数MB)ため、待ち合わせ画面(active)に
+      // 入って初めて読み込む(create/preview画面では読み込まない)。
+      extrasBooted = true;
+      ensureShibuya3d();
+      ensureAr();
+    }
 
     var outOfAreaWrap = document.getElementById("out-of-area-banner-wrap");
     if (state.self && state.self.inArea === false) {
@@ -336,6 +400,8 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
       judgeStatus.className = "";
       judgeNote.textContent = "";
     }
+
+    refreshExtras();
   }
 
   function showJudgeNote(data) {
@@ -354,6 +420,169 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     var arrow = document.getElementById("arrow");
     var rel = (bearingToTarget - heading + 360) % 360;
     arrow.style.transform = "rotate(" + rel + "deg)";
+  }
+
+  // shibuya3d.mjsモジュール自体の読み込み(import()のみ、地図のmountは含まない)。一度だけ実行し、
+  // 以後は同じPromiseを返す。近くのお店(nearestShops)は地図(MapLibre GL、CDNから数百KB)を
+  // 待たずに使いたいので、モジュール読み込みとマウントのPromiseを分けている
+  // (以前はensureShibuya3d()の完了(=地図マウント完了)を待たないとnearestShopsが使えず、
+  // geo.jsの読み込みの方が先に終わって「近くのお店」が空のまま固定される競合があった)。
+  function ensureShibuya3dMod() {
+    if (!extrasState.shibuya3dModPromise) {
+      extrasState.shibuya3dModPromise = import(ASSETS_JS_BASE + "shibuya3d.mjs").then(function (mod) {
+        extrasState.nearestShops = mod.nearestShops;
+        return mod;
+      });
+    }
+    return extrasState.shibuya3dModPromise;
+  }
+
+  // 3D渋谷をmap3d要素にmountする。一度だけ実行し、以後は同じPromiseを返す(mountShibuya3Dは
+  // 1回きり。地図データは数MBあるため待ち合わせ画面(active)に入るまでは読み込まない)。
+  function ensureShibuya3d() {
+    if (!extrasState.shibuya3dPromise) {
+      extrasState.shibuya3dPromise = ensureShibuya3dMod().then(function (mod) {
+        return mod.mountShibuya3D(document.getElementById("map3d"), {});
+      }).then(function (api) {
+        extrasState.shibuya3d = api;
+        return api;
+      });
+    }
+    return extrasState.shibuya3dPromise;
+  }
+
+  // ar.js(AR部品)を読み込んでmountする。一度だけ実行する。mountAR()自体はカメラ・
+  // センサーの許可を求めない(DOM構築のみ)ので、オーバーレイが非表示のうちに先読みしておき、
+  // 「ARで探す」ボタンのクリックハンドラの中でar.start()を直接呼べるようにする
+  // (iOSはユーザー操作コンテキストが切れると許可ダイアログを出さないため)。
+  function ensureAr() {
+    if (!extrasState.arPromise) {
+      extrasState.arPromise = import(ASSETS_JS_BASE + "ar.js").then(function (mod) {
+        var api = mod.mountAR(document.getElementById("ar-mount"));
+        extrasState.ar = api;
+        var btn = document.getElementById("ar-open-btn");
+        btn.disabled = false;
+        btn.textContent = "ARで探す";
+        return api;
+      });
+    }
+    return extrasState.arPromise;
+  }
+
+  // AR部品のgeo.js(destinationPoint/normalizeAngleDiffなどの純粋関数)を読み込む。
+  // ブラウザのESモジュールキャッシュにより、同じURLの2回目以降のimport()は再フェッチされない。
+  function loadGeoMod() {
+    return import(ASSETS_JS_BASE + "geo.js");
+  }
+
+  // WSの最新状態(lastState)と自分の実座標(selfPos)から、3D渋谷のピン・近くのお店・ARの
+  // 表示を更新する。承認前(active以外)や自分の位置がまだ無いときは何もしない。
+  function refreshExtras() {
+    if (!lastState || lastState.phase !== "active" || !selfPos) return;
+    var state = lastState;
+    var meFloor = floorLabelToInt(state.self && state.self.floor);
+    var meFloorInt = meFloor == null ? 1 : meFloor;
+
+    ensureShibuya3d().then(function (api) { api.setMe(selfPos.lat, selfPos.lng, meFloorInt); });
+    if (extrasState.ar) extrasState.ar.setMe(selfPos.lat, selfPos.lng, meFloorInt);
+
+    if (state.distance_m == null || state.bearing_deg == null) return; // 相手の位置はまだ届いていない
+
+    var partnerName = (state.other && state.other.nickname) || "相手";
+    var partnerFloor = floorLabelToInt(state.other && state.other.floor);
+    var partnerFloorInt = partnerFloor == null ? 1 : partnerFloor;
+
+    loadGeoMod().then(function (geoMod) {
+      // 相手の推定座標 = 自分の実座標 + サーバーから届いた距離・方位(destinationPoint)。
+      // 相手の生座標がネットワーク越しに届いているわけではない(このファイル冒頭のコメント参照)。
+      var p = geoMod.destinationPoint(selfPos.lat, selfPos.lng, state.bearing_deg, state.distance_m);
+      ensureShibuya3d().then(function (api) {
+        api.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
+        if (!extrasState.focused) { api.focusBoth(); extrasState.focused = true; } // 初回だけ2人が収まる距離へ(以後は手動操作を尊重)
+      });
+      if (extrasState.ar) extrasState.ar.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
+      updateShopsList(p.lat, p.lng);
+    });
+  }
+
+  // 近くのお店を取得してリストに描画する。ensureShibuya3dMod()(モジュールのimportのみ、地図の
+  // マウントは待たない)にchainすることで、shibuya3d.mjsのモジュール本体さえ読み込めていれば
+  // MapLibreの地図がまだ完全にマウントし終わっていなくても近くのお店を表示できるようにしている。
+  function updateShopsList(lat, lng) {
+    ensureShibuya3dMod().then(function (mod) {
+      return mod.nearestShops(lat, lng, 3);
+    }).then(function (shops) {
+      var list = document.getElementById("shops-list");
+      var empty = document.getElementById("shops-empty");
+      list.innerHTML = "";
+      if (!shops || !shops.length) { empty.style.display = "block"; return; }
+      empty.style.display = "none";
+      for (var i = 0; i < shops.length; i++) {
+        var s = shops[i];
+        var li = document.createElement("li");
+        var nameSpan = document.createElement("span");
+        nameSpan.className = "shop-name";
+        nameSpan.textContent = s.name;
+        var metaSpan = document.createElement("span");
+        metaSpan.className = "shop-meta";
+        metaSpan.textContent = s.distanceM + "m";
+        if (s.level) {
+          // 意図的な簡略化: OSMのlevelタグは自由記法("-1;0"等)のため、変換せずそのまま表示する。
+          var tag = document.createElement("span");
+          tag.className = "floor-tag";
+          tag.textContent = s.level + "階";
+          metaSpan.appendChild(tag);
+        }
+        li.appendChild(nameSpan);
+        li.appendChild(metaSpan);
+        list.appendChild(li);
+      }
+    }).catch(function () {
+      // 意図的な簡略化: お店データの取得に失敗しても待ち合わせ本体の機能(距離・矢印)は継続する
+    });
+  }
+
+  function bindArOverlay() {
+    var overlay = document.getElementById("ar-fullscreen");
+    var openBtn = document.getElementById("ar-open-btn");
+    var closeBtn = document.getElementById("ar-close-btn");
+    var vrBtn = document.getElementById("ar-vr-btn");
+
+    openBtn.onclick = function () {
+      if (!extrasState.ar) return; // 読み込み中はbutton disabledのはずだが念のため
+      overlay.hidden = false;
+      // start()は必ずクリックハンドラの中で直接(awaitを挟まずに)呼ぶ。iOSはユーザー操作の
+      // コンテキストが切れるとカメラ・向きセンサーの許可ダイアログを出さないことがあるため。
+      extrasState.ar.start();
+      offerVrButton(vrBtn);
+    };
+    closeBtn.onclick = function () {
+      overlay.hidden = true;
+      if (extrasState.ar) extrasState.ar.stop();
+    };
+  }
+
+  // VRメガネボタン: WebXR(immersive-ar/immersive-vr)に対応した端末でのみ表示する実験的機能。
+  // AR部品のvr.js側でiPhone/Vision Proは明示的に対象外にしている。初回「ARで探す」タップ時に
+  // 一度だけ対応判定を行う(判定にnavigator.xrへの問い合わせが要るため、使わないなら省く)。
+  function offerVrButton(vrBtn) {
+    if (extrasState.vrChecked) return;
+    extrasState.vrChecked = true;
+    import(ASSETS_JS_BASE + "vr.js").then(function (vrMod) {
+      return vrMod.isVrAvailable().then(function (mode) {
+        if (!mode) return;
+        vrBtn.style.display = "block";
+        vrBtn.onclick = function () {
+          if (!lastState || lastState.bearing_deg == null || lastState.distance_m == null) return;
+          loadGeoMod().then(function (geoMod) {
+            var rel = geoMod.normalizeAngleDiff(heading, lastState.bearing_deg);
+            vrMod.startVrScene(document.getElementById("ar-fullscreen"), mode, rel, lastState.distance_m).catch(function () {});
+          });
+        };
+      });
+    }).catch(function () {
+      // WebXR非対応環境(大半のiPhone/Android)では静かに諦める(実験的機能・ボタンは出さないまま)
+    });
   }
 
   function startOrientation() {
@@ -392,11 +621,15 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     if (!navigator.geolocation) return;
     navigator.geolocation.watchPosition(
       function (pos) {
+        // selfPos(自分の実座標)はこのブラウザ内でのみ使う(3D渋谷の自分ピン・ARのsetMe用)。
+        // ネットワークには一切送信しない値であり、下のsendWsとは別物。
+        selfPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         // 意図的な簡略化: 渋谷エリア判定はサーバー側だけで行う(二重実装を避けるため)。
         // ここでは「両者承認済み(active)」のときだけ送信することで、
         // 承認前は座標を一切ネットワークに出さない。
         if (!lastState || lastState.phase !== "active") return;
         sendWs({ type: "location", lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy });
+        refreshExtras();
       },
       function () {},
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
@@ -496,6 +729,7 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
 
   function main() {
     bindMeetControls();
+    bindArOverlay();
     var m = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
     if (m) { initRoomScreen(m[1]); return; }
     if (location.pathname === "/") { initCreateScreen(); return; }

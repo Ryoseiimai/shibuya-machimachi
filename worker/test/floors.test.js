@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FLOORS, isValidFloor, floorDiff, floorDiffLabel, sameFloor } from "../src/floors.js";
+import { FLOORS, isValidFloor, floorDiff, floorDiffLabel, sameFloor, floorLabelToInt } from "../src/floors.js";
 
 test("FLOORS: B5から10Fまで15段ある", () => {
   assert.equal(FLOORS.length, 15);
@@ -38,4 +38,17 @@ test("floorDiffLabel: 上下と同階の文言", () => {
 test("sameFloor: B1とB1はtrue、B1と1Fはfalse", () => {
   assert.equal(sameFloor("B1", "B1"), true);
   assert.equal(sameFloor("B1", "1F"), false);
+});
+
+test("floorLabelToInt: 地上階・地下階を整数に変換する(3D/AR部品のfloor引数用)", () => {
+  assert.equal(floorLabelToInt("1F"), 1);
+  assert.equal(floorLabelToInt("10F"), 10);
+  assert.equal(floorLabelToInt("B1"), -1);
+  assert.equal(floorLabelToInt("B5"), -5);
+});
+
+test("floorLabelToInt: 不正な値はnull", () => {
+  assert.equal(floorLabelToInt(null), null);
+  assert.equal(floorLabelToInt(""), null);
+  assert.equal(floorLabelToInt("11F"), null);
 });
