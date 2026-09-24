@@ -4,6 +4,8 @@
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Ryoseiimai/shibuya-machimachi)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+**公開中: https://shibuya-machimachi.kaeru3160.workers.dev/**
+
 渋谷で1対1の待ち合わせを、**お互いが承認した相手とだけ**位置を共有して、迷わず会うためのアプリです。
 
 ## スクリーンショット

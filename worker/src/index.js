@@ -6,7 +6,8 @@
  *   GET  /api/rooms/:roomId/preview?invite=  招待リンクのプレビュー(参加前)
  *   POST /api/rooms/:roomId/join             招待トークンで参加する
  *   GET  /api/rooms/:roomId/ws?role=&secret= WebSocket接続(以降のやり取りは全てこれ経由)
- *   GET  /  , GET /r/:roomId                 スマホ用HTML画面(1枚をパスに関わらず配信)
+ *   GET  /                                    紹介LP(トップページ。作成画面ではない)
+ *   GET  /new , GET /r/:roomId                スマホ用HTML画面(作成/参加。1枚をパスに関わらず配信)
  *
  * 実体のルーム管理は Durable Object(RoomDO, room-do.js)に委譲する。roomIdはこのWorker側で
  * crypto.randomUUID()由来のランダムな32桁16進文字列として発行し、
@@ -15,6 +16,7 @@
 import { RoomDO } from "./room-do.js";
 import { randomToken } from "./room.js";
 import { APP_HTML } from "./html.js";
+import { LP_HTML } from "./lp.js";
 import { withSecurityHeaders } from "./security-headers.js";
 
 export { RoomDO };
@@ -101,8 +103,13 @@ async function route(request, env) {
     return forwardToRoom(env, roomId, action, request);
   }
 
-  if (request.method === "GET" && (url.pathname === "/" || ROOM_PAGE_RE.test(url.pathname))) {
+  if (request.method === "GET" && (url.pathname === "/new" || ROOM_PAGE_RE.test(url.pathname))) {
     return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+
+  // トップページ("/")は作成画面ではなく紹介LP。「待ち合わせを作る」ボタンから/newへ誘導する。
+  if (request.method === "GET" && url.pathname === "/") {
+    return new Response(LP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
   return json({ error: "not found" }, 404);
