@@ -39,7 +39,7 @@ test("host creates, guest joins via invite link, both approve, distance+arrow ap
   const pageB = await contextB.newPage();
 
   // 01: ホスト(A)が作成画面でニックネームを入力
-  await pageA.goto("/");
+  await pageA.goto("/new");
   await expect(pageA.locator("#screen-create")).toHaveClass(/visible/);
   await pageA.fill("#create-nickname", "ホストA");
   await shot(pageA, "01_create.png");
@@ -171,7 +171,7 @@ test("network drop shows a red disconnect banner, auto-reconnect clears it", asy
     latestPageRoute = ws;
   });
 
-  await pageA.goto("/");
+  await pageA.goto("/new");
   await pageA.fill("#create-nickname", "ホストA");
   await pageA.click("#create-btn");
   await expect(pageA.locator("#screen-waiting-guest")).toHaveClass(/visible/, { timeout: 10_000 });
@@ -211,7 +211,7 @@ test("full screen (used invite) shows a restart button that goes back to create"
   const pageB = await contextB.newPage();
   const pageC = await contextC.newPage();
 
-  await pageA.goto("/");
+  await pageA.goto("/new");
   await pageA.fill("#create-nickname", "ホストA");
   await pageA.click("#create-btn");
   await expect(pageA.locator("#screen-waiting-guest")).toHaveClass(/visible/, { timeout: 10_000 });
@@ -229,7 +229,7 @@ test("full screen (used invite) shows a restart button that goes back to create"
   await shot(pageC, "13_full_screen_with_restart.png");
 
   await pageC.click("#screen-full .restart-btn");
-  await expect(pageC).toHaveURL(/\/$/, { timeout: 10_000 });
+  await expect(pageC).toHaveURL(/\/new$/, { timeout: 10_000 });
   await expect(pageC.locator("#screen-create")).toHaveClass(/visible/, { timeout: 10_000 });
 
   await contextA.close();

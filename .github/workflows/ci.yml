@@ -29,6 +29,7 @@ jobs:
           node --check src/jev.js
           node --check src/room-do.js
           node --check src/html.js
+          node --check src/lp.js
           node --check src/constants.js
           node --check src/security-headers.js
           node --check public/assets/js/app.js

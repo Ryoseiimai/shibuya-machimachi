@@ -615,12 +615,12 @@
   }
 
   // 行き止まり画面(満員/エラー/期限切れ/停止済み)の「新しく待ち合わせを作る」ボタン。
-  // トップ("/")へ普通に遷移するだけ(sessionStorageの部屋別キーは新しい部屋IDでは参照されないため、
+  // 作成画面("/new")へ普通に遷移するだけ(sessionStorageの部屋別キーは新しい部屋IDでは参照されないため、
   // 特別な後始末は不要)。
   function bindRestartButtons() {
     var buttons = document.querySelectorAll(".restart-btn");
     for (var i = 0; i < buttons.length; i++) {
-      buttons[i].onclick = function () { location.href = "/"; };
+      buttons[i].onclick = function () { location.href = "/new"; };
     }
   }
 
@@ -647,7 +647,7 @@
     setInterval(updateStatusBanner, STATUS_BANNER_POLL_MS);
     var m = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
     if (m) { initRoomScreen(m[1]); return; }
-    if (location.pathname === "/") { initCreateScreen(); return; }
+    if (location.pathname === "/new") { initCreateScreen(); return; }
     showError("ページが見つかりません");
   }
 
