@@ -18,6 +18,8 @@ import {
   stopSharing,
   canAttemptJudge,
   recordJudgeResult,
+  recordJudgePress,
+  bothPressedRecently,
   buildPublicState,
   markConnected,
   RoomError,
@@ -250,7 +252,7 @@ export class RoomDO {
         await this.saveRoom(next);
         this.broadcast(next);
       } else if (payload.type === "judge") {
-        await this.handleJudge(room, ws);
+        await this.handleJudge(room, ws, role);
       }
     } catch (err) {
       const code = err instanceof RoomError ? err.code : "internal_error";
@@ -258,7 +260,7 @@ export class RoomDO {
     }
   }
 
-  async handleJudge(room, ws) {
+  async handleJudge(room, ws, role) {
     // H2セキュリティ対応: このDOインスタンス内で同時に1件しかJev判定を走らせない。
     // 理由はコンストラクタのjudgeInProgressのコメント参照(fetch待ち中は入力ゲートが
     // 効かないため、ここで明示的にロックしないとJev呼び出し回数の上限をすり抜けられる)。
@@ -268,19 +270,39 @@ export class RoomDO {
     }
     this.judgeInProgress = true;
     try {
-      const gate = canAttemptJudge(room);
+      // 「会えた！」の押下(=自己申告)はゲート判定の成否に関わらず必ず記録する。
+      // Jevへの追加コンテキスト(両者が申告したか)にだけ使う値で、判定の可否そのものは変えない。
+      const now = Date.now();
+      let current = room;
+      if (role) {
+        current = recordJudgePress(room, { role, now });
+        await this.saveRoom(current);
+      }
+
+      const gate = canAttemptJudge(current, now);
       if (!gate.ok) {
         this.sendJson(ws, { type: "judgeResult", ok: false, reason: gate.reason, distance_m: gate.distance_m ?? null });
         return;
       }
-      const waitingMinutes = (Date.now() - room.createdAt) / 60000;
+      const waitingMinutes = (now - current.createdAt) / 60000;
       const floorMatch = true; // gate.ok===true の時点で同じ階であることは確認済み
-      const canUseJev = !!this.env.JEV_API_KEY && room.judge.callCount < MAX_JUDGE_CALLS;
+      const canUseJev = !!this.env.JEV_API_KEY && current.judge.callCount < MAX_JUDGE_CALLS;
+      const hostLoc = current.host.lastLocation;
+      const guestLoc = current.guest.lastLocation;
 
       let result;
       if (canUseJev) {
         try {
-          const context = buildMeetContext({ distance_m: gate.distance_m, floorMatch, waitingMinutes });
+          const context = buildMeetContext({
+            distance_m: gate.distance_m,
+            floorMatch,
+            waitingMinutes,
+            hostAccuracy_m: hostLoc?.acc ?? null,
+            guestAccuracy_m: guestLoc?.acc ?? null,
+            hostUpdatedSecondsAgo: hostLoc ? (now - hostLoc.updatedAt) / 1000 : null,
+            guestUpdatedSecondsAgo: guestLoc ? (now - guestLoc.updatedAt) / 1000 : null,
+            bothPressedRecently: bothPressedRecently(current, now),
+          });
           result = await callJev(this.env.JEV_API_KEY, context);
         } catch (_err) {
           result = distanceOnlyJudge({ distance_m: gate.distance_m, floorMatch });
@@ -289,9 +311,15 @@ export class RoomDO {
         result = distanceOnlyJudge({ distance_m: gate.distance_m, floorMatch });
       }
 
-      const next = recordJudgeResult(room, { ...result, now: Date.now() });
+      const next = recordJudgeResult(current, { ...result, now: Date.now() });
       await this.saveRoom(next);
       this.broadcast(next);
+      // found:falseでも「なぜまだ会えた扱いにならないか」を押した本人にだけ伝える(理由なしで
+      // 沈黙されると、押した側は判定が動いているのかどうかも分からず不安になるため)。
+      if (!result.found) {
+        const remainingJevCalls = Math.max(0, MAX_JUDGE_CALLS - next.judge.callCount);
+        this.sendJson(ws, { type: "judgeResult", ok: false, reason: "not_found", remainingJevCalls });
+      }
     } finally {
       this.judgeInProgress = false;
     }

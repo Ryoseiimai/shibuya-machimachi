@@ -22,6 +22,7 @@ import {
   MEET_DISTANCE_M,
   MAX_JUDGE_CALLS,
   LOCATION_STALE_MS,
+  BOTH_PRESSED_JUDGE_WINDOW_MS,
 } from "./constants.js";
 
 export const ERROR_CODES = Object.freeze({
@@ -104,6 +105,9 @@ export function createRoom({ hostNickname, roomId, now = Date.now() }) {
       source: null,
       at: null,
       limitReached: false,
+      // 「会えた！」ボタンを押した時刻(role別)。Jevへの追加コンテキスト(両者が申告したか)にだけ使う。
+      hostPressedAt: null,
+      guestPressedAt: null,
     },
   };
 }
@@ -235,6 +239,27 @@ export function canAttemptJudge(room, now = Date.now()) {
     return { ok: false, reason: "too_far", distance_m };
   }
   return { ok: true, distance_m };
+}
+
+// 「会えた！」ボタンの押下(=自己申告)を記録する。ゲート判定の成否に関わらず必ず呼ぶ
+// (押した事実そのものがJevへの追加コンテキストになるため、距離/階の判定結果とは独立)。
+export function recordJudgePress(room, { role, now = Date.now() }) {
+  if (role !== "host" && role !== "guest") return room;
+  const next = clone(room);
+  if (role === "host") next.judge.hostPressedAt = now;
+  else next.judge.guestPressedAt = now;
+  return next;
+}
+
+// 直近BOTH_PRESSED_JUDGE_WINDOW_MS以内に、両者が「会えた！」を押しているか。
+// 片方だけが大分前に押した古い押下と、もう片方の新しい押下が結びついて
+// 「両者が申告した」と誤認されないよう、両方とも now から見て直近であることも要求する。
+export function bothPressedRecently(room, now = Date.now()) {
+  const { hostPressedAt, guestPressedAt } = room.judge;
+  if (!hostPressedAt || !guestPressedAt) return false;
+  if (now - hostPressedAt > BOTH_PRESSED_JUDGE_WINDOW_MS) return false;
+  if (now - guestPressedAt > BOTH_PRESSED_JUDGE_WINDOW_MS) return false;
+  return Math.abs(hostPressedAt - guestPressedAt) <= BOTH_PRESSED_JUDGE_WINDOW_MS;
 }
 
 export function recordJudgeResult(room, { found, probability, source, now = Date.now() }) {

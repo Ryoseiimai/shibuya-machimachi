@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { RoomDO } from "../src/room-do.js";
 import { createRoom, joinRoom, approveHost, updateLocation, setFloor } from "../src/room.js";
-import { SHIBUYA_STATION } from "../src/constants.js";
+import { SHIBUYA_STATION, MAX_JUDGE_CALLS } from "../src/constants.js";
 
 const ROOM_KEY = "room";
 
@@ -195,6 +195,106 @@ test("handleWsUpgrade: 同じroleの既存ソケットは新規接続時にclose
 
   assert.equal(closeCalls.length, 1, "既存の同role接続がちょうど1回closeされる");
   assert.deepEqual(closeCalls[0], [4001, "duplicate_connection"]);
+});
+
+// ---- 「会えた」判定の改善: 理由の通知・両者申告のJevコンテキスト反映 ----
+test("handleJudge: 0m・同フロアで両者が60秒以内に押すとJevのcontextに反映されfound:trueになる", async () => {
+  let room = createRoom({ hostNickname: "ホスト", roomId: "room-both-press" });
+  room = joinRoom(room, { inviteToken: room.inviteToken, nickname: "ゲスト" });
+  const guestSecret = room.guest.secret;
+  const hostSecret = room.host.secret;
+  room = approveHost(room, { secret: hostSecret });
+  room = setFloor(room, { role: "host", secret: hostSecret, floor: "5F" });
+  // ゲストはまずホストと違う階にする(1回目の押下ではゲートが通らないことを確認するため)。
+  room = setFloor(room, { role: "guest", secret: guestSecret, floor: "6F" });
+  const afterHost = updateLocation(room, {
+    role: "host",
+    secret: hostSecret,
+    lat: SHIBUYA_STATION.lat,
+    lng: SHIBUYA_STATION.lng,
+    acc: 5,
+  });
+  const afterGuest = updateLocation(afterHost.room, {
+    role: "guest",
+    secret: guestSecret,
+    lat: SHIBUYA_STATION.lat, // ホストと同じ座標(0m)
+    lng: SHIBUYA_STATION.lng,
+    acc: 8,
+  });
+  room = afterGuest.room;
+
+  const storage = makeStorage(room);
+  const ctx = { storage, getWebSockets: () => [] };
+  const doInstance = new RoomDO(ctx, { JEV_API_KEY: "fake-key-for-test" });
+
+  const capturedBodies = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    capturedBodies.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({ answers: { met: { type: "noul", noul: 0.95 } } }) };
+  };
+
+  try {
+    const sentHost = [];
+    const wsHost = { send: (m) => sentHost.push(JSON.parse(m)) };
+    const wsGuest = { send: () => {} };
+
+    // 1回目: ホストが押す。まだ階が違うのでゲートで弾かれ、Jevは呼ばれない。押下自体は記録される。
+    let loaded = await doInstance.loadRoom();
+    await doInstance.handleJudge(loaded, wsHost, "host");
+    assert.equal(capturedBodies.length, 0, "階が違う間はJevを呼ばない");
+    assert.ok(
+      sentHost.some((m) => m.type === "judgeResult" && m.reason === "different_floor"),
+      "1回目はdifferent_floorの理由が返る",
+    );
+    let afterFirstPress = await doInstance.loadRoom();
+    assert.ok(afterFirstPress.judge.hostPressedAt, "ゲートが通らなくても押下時刻は記録される");
+
+    // ゲストが階をホストに合わせてから、60秒以内に押す。
+    const synced = setFloor(afterFirstPress, { role: "guest", secret: guestSecret, floor: "5F" });
+    await storage.put("room", synced);
+
+    loaded = await doInstance.loadRoom();
+    await doInstance.handleJudge(loaded, wsGuest, "guest");
+
+    assert.equal(capturedBodies.length, 1, "階が揃った2回目でJevが呼ばれる");
+    assert.match(capturedBodies[0].state, /両者が60秒以内に「会えた」ボタンを押した: はい/);
+    assert.match(capturedBodies[0].state, /Aさんの位置精度: 約5m/);
+    assert.match(capturedBodies[0].state, /Bさんの位置精度: 約8m/);
+
+    const finalRoom = await doInstance.loadRoom();
+    assert.equal(finalRoom.judge.found, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("handleJudge: ゲートを通ってもfound:falseなら、押した本人にだけ残り回数付きの理由が届く", async () => {
+  const { room, hostSecret } = makeActiveRoomInMeetRange();
+  const storage = makeStorage(room);
+  const ctx = { storage, getWebSockets: () => [] };
+  const doInstance = new RoomDO(ctx, { JEV_API_KEY: "fake-key-for-test" });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ answers: { met: { type: "noul", noul: 0.1 } } }) });
+
+  try {
+    const sent = [];
+    const ws = { send: (m) => sent.push(JSON.parse(m)) };
+    const loaded = await doInstance.loadRoom();
+    await doInstance.handleJudge(loaded, ws, "host");
+
+    const note = sent.find((m) => m.type === "judgeResult");
+    assert.ok(note, "found:falseでもjudgeResult通知が届く");
+    assert.equal(note.ok, false);
+    assert.equal(note.reason, "not_found");
+    assert.equal(note.remainingJevCalls, MAX_JUDGE_CALLS - 1);
+
+    const finalRoom = await doInstance.loadRoom();
+    assert.equal(finalRoom.judge.found, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 // ---- M3: WSメッセージサイズ上限 ----

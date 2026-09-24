@@ -7,10 +7,16 @@
   "use strict";
   var configMeta = document.querySelector('meta[name="app-config"]');
   var MEET_DISTANCE_M = configMeta ? parseInt(configMeta.getAttribute("content"), 10) : 20;
+  var staleMeta = document.querySelector('meta[name="app-config-location-stale-ms"]');
+  var LOCATION_STALE_MS = staleMeta ? parseInt(staleMeta.getAttribute("content"), 10) : 120000;
   var SCREENS = [
     "loading", "create", "preview", "full", "error", "expired",
     "waiting-guest", "approve", "waiting-approval-guest", "stopped", "meet",
   ];
+  // 通信切れ再接続の指数バックオフ設定(1s, 2s, 4s, ... 上限15s)。
+  var RECONNECT_BASE_MS = 1000;
+  var RECONNECT_MAX_MS = 15000;
+  var STATUS_BANNER_POLL_MS = 5000; // WSが止まっていても「最終更新から何秒」表示を進めるための定期再評価
   function showOnly(name) {
     for (var i = 0; i < SCREENS.length; i++) {
       var el = document.getElementById("screen-" + SCREENS[i]);
@@ -27,6 +33,13 @@
   var ws = null;
   var lastState = null;
   var heading = 0;
+
+  // --- 通信切れ検知・自動再接続(指数バックオフ) ---
+  var wsConnected = false; // まだ一度も繋がっていない/意図的な終端状態ではfalseのまま
+  var currentConn = null; // { roomId, role, secret } — 再接続時に使う
+  var reconnectAttempts = 0;
+  var reconnectTimer = null;
+  var disconnectedAt = null;
 
   // --- 3D渋谷・近くのお店・AR(組み込み部品)---
   // 重要: 相手の生座標(lat/lng)はサーバーから一切送られてこない
@@ -64,24 +77,107 @@
     return { role: role, secret: secret };
   }
 
-  function connectWs(roomId, role, secret) {
-    showOnly("loading");
+  function connectWs(roomId, role, secret, isReconnect) {
+    currentConn = { roomId: roomId, role: role, secret: secret };
+    if (!isReconnect) showOnly("loading");
     var url = wsScheme + "//" + location.host + "/api/rooms/" + roomId + "/ws?role=" + role + "&secret=" + encodeURIComponent(secret);
     ws = new WebSocket(url);
+    ws.onopen = function () {
+      wsConnected = true;
+      disconnectedAt = null;
+      reconnectAttempts = 0;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      updateStatusBanner();
+    };
     ws.onmessage = function (evt) {
       var data;
       try { data = JSON.parse(evt.data); } catch (e) { return; }
-      if (data.type === "state") { lastState = data; render(data); }
+      if (data.type === "state") {
+        wsConnected = true;
+        lastState = data;
+        render(data);
+      }
       else if (data.type === "judgeResult" && data.ok === false) { showJudgeNote(data); }
       else if (data.type === "error") { /* 個別のUIメッセージは各操作のUIで表示するため、ここでは黙って無視 */ }
     };
     ws.onclose = function () {
-      if (lastState && (lastState.phase === "expired" || lastState.phase === "stopped")) return;
-      // 意図的な簡略化: 自動再接続は行わない(MVP)。切れた場合はページ再読み込みを促す。
+      if (lastState && (lastState.phase === "expired" || lastState.phase === "stopped")) return; // 終端状態は再接続しない
+      wsConnected = false;
+      if (!disconnectedAt) disconnectedAt = Date.now();
+      updateStatusBanner();
+      scheduleReconnect();
     };
-    ws.onerror = function () {};
-    startGeolocation();
-    startOrientation();
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    if (!isReconnect) { startGeolocation(); startOrientation(); }
+  }
+
+  // 通信が切れたら指数バックオフ(1s→2s→4s→…上限15s)で再接続を試みる。
+  // 成功(ws.onopen/stateメッセージ受信)すればreconnectAttemptsは0に戻る。
+  function scheduleReconnect() {
+    if (reconnectTimer || !currentConn) return;
+    var delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts));
+    reconnectAttempts += 1;
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (currentConn) connectWs(currentConn.roomId, currentConn.role, currentConn.secret, true);
+    }, delay);
+  }
+
+  function formatClockTime(ms) {
+    if (!ms) return "--:--";
+    return new Date(ms).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // 待ち合わせ画面の「状態バナー」を1箇所に集約する: 通信切れ > 自分がエリア外 > 相手がエリア外 >
+  // 相手の位置が古い、の優先順で1つだけ表示する(複数のバナーが同時に積み重なるのを避ける)。
+  // 併せて、通信切れ・位置が古いときは距離/矢印カードを薄く(is-stale)して「今の値ではない」と伝える。
+  function updateStatusBanner() {
+    var wrap = document.getElementById("status-banner-wrap");
+    var el = document.getElementById("status-banner");
+    var distanceCard = document.getElementById("distance-card");
+    if (!wrap || !el) return;
+
+    if (!wsConnected) {
+      var lastUpdate = lastState && lastState.other && lastState.other.lastUpdatedAt;
+      el.textContent = "通信が切れました。位置が更新されていません(最終更新 " + formatClockTime(lastUpdate || disconnectedAt) + ")";
+      el.className = "offline-banner";
+      wrap.style.display = "block";
+      if (distanceCard) distanceCard.classList.add("is-stale");
+      return;
+    }
+
+    if (!lastState || lastState.phase !== "active") {
+      wrap.style.display = "none";
+      if (distanceCard) distanceCard.classList.remove("is-stale");
+      return;
+    }
+
+    if (lastState.self && lastState.self.inArea === false) {
+      el.textContent = "渋谷エリアの外なので共有を止めています";
+      el.className = "warn-banner";
+      wrap.style.display = "block";
+      if (distanceCard) distanceCard.classList.remove("is-stale");
+      return;
+    }
+    if (lastState.other && lastState.other.inArea === false) {
+      el.textContent = "相手が渋谷エリアの外にいるため、距離を計算できません";
+      el.className = "warn-banner";
+      wrap.style.display = "block";
+      if (distanceCard) distanceCard.classList.remove("is-stale");
+      return;
+    }
+
+    var otherUpdatedAt = lastState.other && lastState.other.lastUpdatedAt;
+    var isStale = !!otherUpdatedAt && (Date.now() - otherUpdatedAt) > LOCATION_STALE_MS;
+    if (distanceCard) distanceCard.classList.toggle("is-stale", isStale);
+    if (isStale) {
+      el.textContent = "相手の位置が古くなっています";
+      el.className = "warn-banner";
+      wrap.style.display = "block";
+      return;
+    }
+
+    wrap.style.display = "none";
   }
 
   function sendWs(msg) {
@@ -129,16 +225,7 @@
       ensureAr();
     }
 
-    var outOfAreaWrap = document.getElementById("out-of-area-banner-wrap");
-    if (state.self && state.self.inArea === false) {
-      document.getElementById("out-of-area-banner").textContent = "渋谷エリアの外なので共有を止めています";
-      outOfAreaWrap.style.display = "block";
-    } else if (state.other && state.other.inArea === false) {
-      document.getElementById("out-of-area-banner").textContent = "相手が渋谷エリアの外にいるため、距離を計算できません";
-      outOfAreaWrap.style.display = "block";
-    } else {
-      outOfAreaWrap.style.display = "none";
-    }
+    updateStatusBanner();
 
     var distEl = document.getElementById("meet-distance");
     distEl.textContent = state.distance_m != null ? state.distance_m : "--";
@@ -172,6 +259,14 @@
 
   function showJudgeNote(data) {
     var note = document.getElementById("judge-note");
+    if (data.reason === "not_found") {
+      // 距離・階のゲートは通ったが、Jev(または距離のみ判定)が「まだ会えたとは言えない」と
+      // 判定したケース。理由を出さず沈黙すると「押しても反応がない」ように見えてしまうため、
+      // 再挑戦を促す文言を出す(残りJev呼び出し回数が分かれば併記する)。
+      var remaining = typeof data.remainingJevCalls === "number" ? data.remainingJevCalls : null;
+      note.textContent = "まだ判定できませんでした。相手の姿が見えたらもう一度押してください" + (remaining != null ? "(残り" + remaining + "回)" : "");
+      return;
+    }
     var reasonText = {
       too_far: "まだ" + MEET_DISTANCE_M + "m以内に近づいていません" + (data.distance_m != null ? "(現在約" + data.distance_m + "m)" : ""),
       different_floor: "階が違います。同じ階に来てから押してください",
@@ -367,14 +462,17 @@
         if (lastState && lastState.bearing_deg != null) applyArrowRotation(lastState.bearing_deg);
       }
     }
+    var hint = document.getElementById("orientation-permission-hint");
     if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
       var btn = document.getElementById("orientation-permission-btn");
       btn.style.display = "inline-block";
+      if (hint) hint.style.display = "block";
       btn.onclick = function () {
         DeviceOrientationEvent.requestPermission().then(function (res) {
           if (res === "granted") {
             window.addEventListener("deviceorientation", onOrientation);
             btn.style.display = "none";
+            if (hint) hint.style.display = "none";
           }
         }).catch(function () {});
       };
@@ -516,9 +614,37 @@
     };
   }
 
+  // 行き止まり画面(満員/エラー/期限切れ/停止済み)の「新しく待ち合わせを作る」ボタン。
+  // トップ("/")へ普通に遷移するだけ(sessionStorageの部屋別キーは新しい部屋IDでは参照されないため、
+  // 特別な後始末は不要)。
+  function bindRestartButtons() {
+    var buttons = document.querySelectorAll(".restart-btn");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].onclick = function () { location.href = "/"; };
+    }
+  }
+
+  // LINE/X(旧Twitter)/Instagram/Facebook等のアプリ内ブラウザ(WebView)は、getUserMedia(AR用カメラ)や
+  // DeviceOrientationEvent.requestPermission(iOSの向きセンサー許可)が制限されていることが多いため、
+  // 標準ブラウザで開き直すよう促す。UAでの判定はベストエフォート(将来UAが変わる可能性はある)。
+  function isInAppBrowser() {
+    var ua = navigator.userAgent || "";
+    return /Line\//i.test(ua) || /FBAN|FBAV/i.test(ua) || /Instagram/i.test(ua) || /Twitter/i.test(ua) || /MicroMessenger/i.test(ua);
+  }
+  function bindInAppBrowserBanner() {
+    if (!isInAppBrowser()) return;
+    var el = document.getElementById("in-app-browser-banner");
+    if (el) el.classList.add("visible");
+  }
+
   function main() {
     bindMeetControls();
     bindArOverlay();
+    bindRestartButtons();
+    bindInAppBrowserBanner();
+    // WSが止まっていても「最終更新から何秒経ったか」の表示(通信切れバナー・古い位置の薄表示)を
+    // 進めるための定期再評価。renderMeet()を経由しない軽量な関数なので、頻度が高くても負荷は小さい。
+    setInterval(updateStatusBanner, STATUS_BANNER_POLL_MS);
     var m = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
     if (m) { initRoomScreen(m[1]); return; }
     if (location.pathname === "/") { initCreateScreen(); return; }

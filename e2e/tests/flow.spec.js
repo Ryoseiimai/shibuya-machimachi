@@ -99,6 +99,11 @@ test("host creates, guest joins via invite link, both approve, distance+arrow ap
     expect(Number(text)).toBeLessThan(50);
   }).toPass({ timeout: 15_000 });
 
+  // 「会えた！」判定: 階を選ぶ前に押すと、found:falseの理由(missing_floor)がjudge-noteに出る。
+  // 2026-09-24 UXレビュー対応: 押しても無反応に見えないよう、必ず理由付きで返す。
+  await pageA.click("#judge-btn");
+  await expect(pageA.locator("#judge-note")).toHaveText("お互いに今いる階を選んでください", { timeout: 5_000 });
+
   const arrowTransformA = await pageA.locator("#arrow").evaluate((el) => el.style.transform);
   const arrowTransformB = await pageB.locator("#arrow").evaluate((el) => el.style.transform);
   expect(arrowTransformA).toContain("rotate(");
@@ -128,18 +133,106 @@ test("host creates, guest joins via invite link, both approve, distance+arrow ap
   });
   await shot(pageA, "10_active_with_3d_shops.png");
 
-  // 10: AR — 「ARで探す」ボタンで全画面ARビューを開くと、相手がいる方向に人影(シルエット)が出る。
-  // POINT_BはPOINT_Aの真北にあり、ARの向きセンサーはヘッドレス環境では初期値heading=0(北向き)の
-  // ままなので、相手の方位(≒0度)は視野角60度の正面に収まり、矢印ではなく人影が表示される側になる
-  // (ar.js の render(): |normalizeAngleDiff(heading, bearing)| <= 30 で人影、それ以外は矢印)。
+  // 10: AR — 「ARで探す」ボタンで全画面ARビューを開く。この実行環境では
+  // DeviceOrientationEvent.requestPermission()がheadlessで許可されない(=denied相当)ため、
+  // 2026-09-24 UXレビューitem3対応により、矢印・人影は出さず「コンパスが使えない」中立表示になる
+  // (許可されない/そもそも非対応、どちらの場合も同じ中立表示に倒す設計。誤った方向を示すより、
+  // 方向自体を出さない方が安全という判断。実機で許可されればar.js側のロジックで通常どおり
+  // 相手の方向に矢印/人影が出る)。
   await expect(pageA.locator("#ar-open-btn")).toBeEnabled({ timeout: 20_000 });
   await pageA.click("#ar-open-btn");
   await expect(pageA.locator("#ar-fullscreen")).toBeVisible();
-  await expect(pageA.locator(".mm-ar-person")).toBeVisible({ timeout: 10_000 });
+  await expect(pageA.locator(".mm-ar-neutral")).toBeVisible({ timeout: 10_000 });
+  await expect(pageA.locator(".mm-ar-neutral")).toContainText("コンパスが使えないので方向は出せません");
+  await expect(pageA.locator(".mm-ar-person")).toBeHidden();
   await shot(pageA, "11_ar_view.png");
   await pageA.click("#ar-close-btn");
   await expect(pageA.locator("#ar-fullscreen")).toBeHidden();
 
   await contextA.close();
   await contextB.close();
+});
+
+// 通信切れ検知: 2026-09-24 UXレビュー item1。page.routeWebSocket()でAのWS接続を実際に横取りし、
+// ページ側のルート(=ブラウザから見えるWebSocketそのもの)をcloseして「通信切れ」を再現する
+// (ローカルループバック相手だとcontext.setOffline()が既存のWebSocket接続を切ってくれない環境が
+// あるため、こちらの方法の方が確実。実測: サーバー側routeのclose()は伝播しないが、ページ側
+// routeのclose()は実際のWebSocket.oncloseを発火させる)。デフォルトの双方向フォワーディングに
+// 任せているので、切断させる瞬間まで通信内容には一切手を加えない。
+test("network drop shows a red disconnect banner, auto-reconnect clears it", async ({ browser }) => {
+  const contextA = await browser.newContext({ viewport: MOBILE_VIEWPORT, geolocation: POINT_A, permissions: ["geolocation"] });
+  const contextB = await browser.newContext({ viewport: MOBILE_VIEWPORT, geolocation: POINT_B, permissions: ["geolocation"] });
+  const pageA = await contextA.newPage();
+  const pageB = await contextB.newPage();
+
+  let latestPageRoute = null;
+  await pageA.routeWebSocket(/\/ws\?role=/, (ws) => {
+    ws.connectToServer(); // 既定どおり双方向フォワーディング、切断だけ後で自分で発火させる
+    latestPageRoute = ws;
+  });
+
+  await pageA.goto("/");
+  await pageA.fill("#create-nickname", "ホストA");
+  await pageA.click("#create-btn");
+  await expect(pageA.locator("#screen-waiting-guest")).toHaveClass(/visible/, { timeout: 10_000 });
+  const inviteUrl = await pageA.inputValue("#invite-url-input");
+
+  await pageB.goto(inviteUrl);
+  await expect(pageB.locator("#screen-preview")).toHaveClass(/visible/, { timeout: 10_000 });
+  await pageB.fill("#preview-nickname", "ゲストB");
+  await pageB.click("#preview-join-btn");
+  await expect(pageA.locator("#screen-approve")).toHaveClass(/visible/, { timeout: 10_000 });
+  await pageA.click("#approve-btn");
+  await expect(pageA.locator("#screen-meet")).toHaveClass(/visible/, { timeout: 10_000 });
+  await expect.poll(() => latestPageRoute !== null, { timeout: 10_000 }).toBe(true);
+
+  // ページ側のWebSocketルートをcloseする = Aの実際のWebSocketが切断されるのと同じ
+  // (ws.oncloseが発火し、指数バックオフの1回目(1秒後)まではバナーが見えているはず)。
+  await latestPageRoute.close();
+  await expect(pageA.locator("#status-banner-wrap")).toBeVisible({ timeout: 10_000 });
+  await expect(pageA.locator("#status-banner")).toHaveClass(/offline-banner/);
+  await expect(pageA.locator("#status-banner")).toContainText("通信が切れました");
+  await shot(pageA, "12_disconnect_banner.png");
+
+  // 指数バックオフでの再接続(routeWebSocketは新しい接続にも同じハンドラを適用し、
+  // 今度は普通にサーバーへ転送されるので実際に繋がる)によりバナーが自動的に消える。
+  await expect(pageA.locator("#status-banner-wrap")).toBeHidden({ timeout: 25_000 });
+
+  await contextA.close();
+  await contextB.close();
+});
+
+// 行き止まり画面(満員)からの復帰: 2026-09-24 UXレビュー item8。
+test("full screen (used invite) shows a restart button that goes back to create", async ({ browser }) => {
+  const contextA = await browser.newContext({ viewport: MOBILE_VIEWPORT, geolocation: POINT_A, permissions: ["geolocation"] });
+  const contextB = await browser.newContext({ viewport: MOBILE_VIEWPORT, geolocation: POINT_B, permissions: ["geolocation"] });
+  const contextC = await browser.newContext({ viewport: MOBILE_VIEWPORT });
+  const pageA = await contextA.newPage();
+  const pageB = await contextB.newPage();
+  const pageC = await contextC.newPage();
+
+  await pageA.goto("/");
+  await pageA.fill("#create-nickname", "ホストA");
+  await pageA.click("#create-btn");
+  await expect(pageA.locator("#screen-waiting-guest")).toHaveClass(/visible/, { timeout: 10_000 });
+  const inviteUrl = await pageA.inputValue("#invite-url-input");
+
+  await pageB.goto(inviteUrl);
+  await expect(pageB.locator("#screen-preview")).toHaveClass(/visible/, { timeout: 10_000 });
+  await pageB.fill("#preview-nickname", "ゲストB");
+  await pageB.click("#preview-join-btn");
+  await expect(pageB.locator("#screen-waiting-approval-guest")).toHaveClass(/visible/, { timeout: 10_000 });
+
+  // 招待は既に使用済み(inviteUsed=true)なので、3人目のCはfull画面に行き止まる。
+  await pageC.goto(inviteUrl);
+  await expect(pageC.locator("#screen-full")).toHaveClass(/visible/, { timeout: 10_000 });
+  await shot(pageC, "13_full_screen_with_restart.png");
+
+  await pageC.click("#screen-full .restart-btn");
+  await expect(pageC).toHaveURL(/\/$/, { timeout: 10_000 });
+  await expect(pageC.locator("#screen-create")).toHaveClass(/visible/, { timeout: 10_000 });
+
+  await contextA.close();
+  await contextB.close();
+  await contextC.close();
 });
