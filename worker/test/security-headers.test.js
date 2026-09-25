@@ -17,17 +17,24 @@ test("SECURITY_HEADERS: 必須ヘッダが正しい値で揃っている", () =>
   assert.match(SECURITY_HEADERS["Strict-Transport-Security"], /max-age=\d+/);
 });
 
-test("CSP: frame-ancestors 'none' を含み、script-srcに'unsafe-inline'を含まない", () => {
+test("CSP: frame-ancestors 'none' を含み、script-srcに'unsafe-inline'/'unsafe-eval'を含まない", () => {
   assert.match(CONTENT_SECURITY_POLICY, /frame-ancestors 'none'/);
   const scriptSrcMatch = CONTENT_SECURITY_POLICY.match(/script-src ([^;]+)/);
   assert.ok(scriptSrcMatch, "script-srcディレクティブが存在する");
   assert.ok(!scriptSrcMatch[1].includes("unsafe-inline"), "script-srcにunsafe-inlineを含んではいけない");
-  assert.ok(!scriptSrcMatch[1].includes("unsafe-eval"), "script-srcにunsafe-evalを含んではいけない");
+  // トークン単位でチェックする('wasm-unsafe-eval'は許可対象の別トークンなので、
+  // 素朴な部分文字列一致だと"wasm-unsafe-eval".includes("unsafe-eval")がtrueになり
+  // 誤検知する。空白区切りで分割し、'unsafe-eval'そのものと完全一致するトークンが
+  // 無いことだけを見る。'wasm-unsafe-eval'はWebAssemblyのコンパイル/実行のみを許可する
+  // CSP Level 3の別トークンで、任意コードのeval()は依然として許可しない)。
+  const scriptSrcTokens = scriptSrcMatch[1].trim().split(/\s+/);
+  assert.ok(!scriptSrcTokens.includes("'unsafe-eval'"), "script-srcに'unsafe-eval'を含んではいけない(wasm-unsafe-evalは可)");
 });
 
-test("CSP: 3D渋谷/ARに必要な許可先(地理院タイル・blob worker)が入っている", () => {
+test("CSP: 3D渋谷/AR/高画質ビューに必要な許可先(地理院タイル・PLATEAU 3D Tiles・blob worker)が入っている", () => {
   assert.match(CONTENT_SECURITY_POLICY, /img-src[^;]*https:\/\/cyberjapandata\.gsi\.go\.jp/);
   assert.match(CONTENT_SECURITY_POLICY, /connect-src[^;]*https:\/\/cyberjapandata\.gsi\.go\.jp/);
+  assert.match(CONTENT_SECURITY_POLICY, /connect-src[^;]*https:\/\/assets\.cms\.plateau\.reearth\.io/);
   assert.match(CONTENT_SECURITY_POLICY, /worker-src[^;]*blob:/);
 });
 
