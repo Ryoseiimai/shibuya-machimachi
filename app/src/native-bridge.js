@@ -5,7 +5,7 @@
 //
 // ネイティブ機能は Capacitor が注入する window.Capacitor.Plugins 経由で呼ぶ(バンドラ不要):
 //   位置情報 = Geolocation(CoreLocation) / 方位 = Compass(このアプリ独自、AppDelegate.swift)
-//   共有 = Share(共有シート) / 触覚 = Haptics / ディープリンク = App(appUrlOpen)
+//   共有 = Share(共有シート) / 確認 = Dialog / 触覚 = Haptics / ディープリンク = App(appUrlOpen)
 (function () {
   "use strict";
   var Cap = window.Capacitor || null;
@@ -89,6 +89,23 @@
     return Promise.resolve();
   }
 
+  // 確認ダイアログ。ボタンの文言を指定できるネイティブのDialog(@capacitor/dialog)を使う
+  // (WebViewのconfirm()はCapacitorがボタンを英語の Cancel/Ok 固定で出すため)。無ければブラウザのconfirm。
+  // 戻り値: Promise<boolean>(OK側を押したらtrue)
+  function confirmDialog(opts) {
+    var D = Plugins.Dialog;
+    if (!D) return Promise.resolve(window.confirm(opts.message));
+    var options = {
+      message: opts.message,
+      okButtonTitle: opts.okLabel || "OK",
+      cancelButtonTitle: opts.cancelLabel || "キャンセル",
+    };
+    if (opts.title) options.title = opts.title; // 空文字の見出しを渡すと空行が出るため、あるときだけ渡す
+    return D.confirm(options).then(function (r) {
+      return !!(r && r.value);
+    });
+  }
+
   function haptic(kind) {
     var H = Plugins.Haptics;
     if (!H) return;
@@ -158,6 +175,7 @@
     },
     watchHeading: watchHeading,
     share: share,
+    confirm: confirmDialog,
     haptic: haptic,
     setDemo: function (d) {
       demo = d;

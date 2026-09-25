@@ -43,6 +43,7 @@ const TILESET_URL = "https://assets.cms.plateau.reearth.io/assets/16/b016d3-42ef
 
 const STATION = { lat: 35.659, lng: 139.7005 };
 const DEG2RAD = Math.PI / 180;
+const EARTH_RADIUS_M = 6378137; // 範囲判定用(WGS84赤道半径。駅から数百mの判定なので球近似で足りる)
 const FLOOR_HEIGHT_M = 3.5;
 const BASEMENT_PILLAR_HEIGHT_M = 5;
 // PLATEAUの3D Tilesは楕円体高(標高＋ジオイド高)で置かれているため、楕円体高0に地面を置くと建物が約50m浮く。
@@ -60,8 +61,45 @@ const INTRO_RAD_PER_SEC = 3 * DEG2RAD; // ゆっくり回り込む速さ(360度�
 // モバイル回線・非力な端末では詳細度を落として転送量・負荷を抑える(タスク仕様の
 // 「スマホで重い場合の注意書き」に対応する実措置)。ポインタが「coarse」(タッチ操作)かどうかで判定する。
 const IS_COARSE_POINTER = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-const ERROR_TARGET = IS_COARSE_POINTER ? 28 : 14; // 3d-tiles-rendererの許容スクリーン空間誤差(px)。小さいほど高精細・高負荷
-const MAX_CAMERA_DISTANCE_M = IS_COARSE_POINTER ? 1100 : 1800; // ズームアウトで区全体(143MB)を読みに行かないための上限
+const MB = 1024 * 1024;
+
+// 端末ごとの負荷の上限。PLATEAUの最も細かいタイル(約200m四方)はテクスチャが1枚2048〜4096px四方
+// (展開すると17〜67MB/枚、駅から500m以内の38枚中23枚が4096px。2026-09-25実タイルで確認)。
+// 以前のタッチ端末設定(キャッシュ700MB・テクスチャ原寸・同時ダウンロード25/同時展開5・区全体が対象)では、
+// iPhone 16実機のアプリで読み込み54〜56%付近でWebViewの中身(WebContentプロセス)がメモリ超過で落ち、
+// 作成画面に戻った。タッチ端末は「落ちないこと」を最優先に、読む範囲・テクスチャ解像度・同時処理数・キャッシュを絞る。
+// このタイルセットは親タイルの幾何誤差が大きく(231〜316)、視野内はほぼ必ず最細のタイルまで細分化されるため、
+// errorTargetを上げても読む量はほとんど減らない(範囲の限定とテクスチャ縮小が効く)。
+const TOUCH_LIMITS = Object.freeze({
+  errorTarget: 28, // 3d-tiles-rendererの許容スクリーン空間誤差(px)。小さいほど高精細・高負荷
+  maxCameraDistanceM: 1100, // ズームアウトの上限
+  areaRadiusM: 500, // 渋谷駅からこの半径にかかるタイルだけ読む(区全体を読みに行かない)
+  leafTextureMaxPx: 1024, // 最も細かいタイルのテクスチャの長辺上限(4096→1024でメモリ1/16)
+  parentTextureMaxPx: 512, // 読み込み中・遠景に出る粗いタイルのテクスチャの長辺上限
+  cacheMaxBytes: 220 * MB, // タイルキャッシュの上限(テクスチャ・形状の推定バイト数)
+  cacheMinBytes: 150 * MB, // 使っていないタイルをここまで捨てる
+  downloadJobs: 4, // 同時ダウンロード数(既定25)
+  parseJobs: 2, // 同時展開数(既定5)。展開中は縮小前の原寸テクスチャがメモリに乗るため絞る
+  dracoWorkers: 2, // 形状の展開用Worker数(既定4)
+});
+// 意図的な簡略化: PCは従来どおり(範囲・テクスチャ・同時処理数はライブラリ既定)。
+// PCでも重い場合は TOUCH_LIMITS と同じ項目を埋めるのが入口。
+const DESKTOP_LIMITS = Object.freeze({
+  errorTarget: 14,
+  maxCameraDistanceM: 1800, // ズームアウトで区全体(143MB)を読みに行かないための上限
+  areaRadiusM: null,
+  leafTextureMaxPx: null,
+  parentTextureMaxPx: null,
+  // 既定のLRUキャッシュ上限(0.4GB)はテクスチャ付き建物だとすぐ埋まり(2026-09-25実測:
+  // タイル111件・平均約4MB/件で早くも上限超過)、以後の候補タイルがすべて"refused"されて
+  // 詳細タイルへ絶対に収束しなくなる(activeが1件のまま増えない不具合として現れた)ため広げる。
+  cacheMaxBytes: 1600 * MB,
+  cacheMinBytes: null,
+  downloadJobs: null,
+  parseJobs: null,
+  dracoWorkers: null,
+});
+const LIMITS = IS_COARSE_POINTER ? TOUCH_LIMITS : DESKTOP_LIMITS;
 
 function floorHeightM(floor) {
   const f = Number.isFinite(floor) ? Math.trunc(floor) : 1;
@@ -73,6 +111,7 @@ function setupGltfLoader(tiles) {
   const dracoLoader = new DRACOLoader();
   dracoLoader.setDecoderPath(DRACO_DECODER_PATH);
   dracoLoader.setDecoderConfig({ type: "wasm" });
+  if (LIMITS.dracoWorkers) dracoLoader.setWorkerLimit(LIMITS.dracoWorkers);
 
   const gltfLoader = new GLTFLoader(tiles.manager);
   gltfLoader.setDRACOLoader(dracoLoader);
@@ -81,6 +120,103 @@ function setupGltfLoader(tiles) {
   tiles.manager.addHandler(/\.(gltf|glb)$/, gltfLoader);
   tiles.manager.addHandler(/\.drc$/, dracoLoader);
   return { gltfLoader, dracoLoader };
+}
+
+// ---- 読む範囲の限定: tileset.json を取得した直後に、中心から半径radiusMにかからないタイルを木から外す ----
+// (3d-tiles-rendererのプラグインのfetchData。ルートのtileset.jsonだけを横取りし、他のURLはnullを返して既定の取得に任せる)
+function regionDistanceM(region, center) {
+  const [west, south, east, north] = region;
+  const lat = center.lat * DEG2RAD;
+  const lng = center.lng * DEG2RAD;
+  const nearestLat = Math.min(Math.max(lat, south), north);
+  const nearestLng = Math.min(Math.max(lng, west), east);
+  const dy = (nearestLat - lat) * EARTH_RADIUS_M;
+  const dx = (nearestLng - lng) * EARTH_RADIUS_M * Math.cos(lat);
+  return Math.hypot(dx, dy);
+}
+
+function pruneTileToRadius(tile, center, radiusM) {
+  if (!Array.isArray(tile.children)) return;
+  // regionで範囲が分からないタイル(このデータには無い)は残す
+  tile.children = tile.children.filter((child) => {
+    const region = child.boundingVolume && child.boundingVolume.region;
+    return !region || regionDistanceM(region, center) <= radiusM;
+  });
+  for (const child of tile.children) pruneTileToRadius(child, center, radiusM);
+}
+
+function createAreaLimitPlugin(tilesetUrl, center, radiusM) {
+  return {
+    name: "MACHIMACHI_AREA_LIMIT",
+    fetchData(url, options) {
+      if (url !== tilesetUrl) return null;
+      return fetch(url, options).then((res) => {
+        if (!res.ok) throw new Error(`tileset.jsonの取得に失敗しました(HTTP ${res.status})`);
+        return res.json();
+      }).then((tileset) => {
+        pruneTileToRadius(tileset.root, center, radiusM);
+        return tileset;
+      });
+    },
+  };
+}
+
+// ---- テクスチャの縮小: タイルの形状・テクスチャが展開された直後(GPUへ送る前)に長辺をmaxPxへ縮める ----
+async function shrinkImage(image, maxPx) {
+  const scale = maxPx / Math.max(image.width, image.height);
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(image, {
+        resizeWidth: width, resizeHeight: height, resizeQuality: "medium",
+        premultiplyAlpha: "none", colorSpaceConversion: "none",
+      });
+      if (bitmap.width === width && bitmap.height === height) return bitmap;
+      bitmap.close(); // 縮小指定を無視する環境。下のcanvasで縮める
+    } catch (err) {
+      console.warn("高画質3D: createImageBitmapで縮小できないためcanvasで縮小します", err);
+    }
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("高画質3D: テクスチャ縮小用のcanvasが使えません");
+  ctx.drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+function collectTextures(scene) {
+  const textures = new Set();
+  scene.traverse((obj) => {
+    const materials = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
+    for (const material of materials) {
+      for (const key of Object.keys(material)) {
+        const value = material[key];
+        if (value && value.isTexture) textures.add(value);
+      }
+    }
+  });
+  return textures;
+}
+
+function createTextureLimitPlugin(leafMaxPx, parentMaxPx) {
+  return {
+    name: "MACHIMACHI_TEXTURE_LIMIT",
+    async processTileModel(scene, tile) {
+      const isLeaf = !tile.children || tile.children.length === 0;
+      const maxPx = isLeaf ? leafMaxPx : parentMaxPx;
+      for (const texture of collectTextures(scene)) {
+        const image = texture.image;
+        if (!image || Math.max(image.width || 0, image.height || 0) <= maxPx) continue;
+        // 縮小に失敗したら例外をそのまま投げ、そのタイルは読み込み失敗にする(原寸のまま載せてメモリ超過で落ちるより良い)
+        texture.image = await shrinkImage(image, maxPx);
+        texture.needsUpdate = true;
+        if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap) image.close();
+      }
+    },
+  };
 }
 
 function buildProgressOverlay(container) {
@@ -167,13 +303,19 @@ export async function mountShibuyaHQ(container, opts = {}) {
   scene.add(ground);
 
   const tiles = new TilesRenderer(TILESET_URL);
-  tiles.errorTarget = ERROR_TARGET;
-  // 既定のLRUキャッシュ上限(0.4GB)はテクスチャ付き建物だとすぐ埋まり(2026-09-25実測:
-  // タイル111件・平均約4MB/件で早くも上限超過)、以後の候補タイルがすべて"refused"されて
-  // 詳細タイルへ絶対に収束しなくなる(activeが1件のまま増えない不具合として現れた)。
-  // 「高画質ビュー」を明示的に開いた時だけ使うメモリなので、既定より広げる(モバイルは控えめに)。
-  tiles.lruCache.maxBytesSize = (IS_COARSE_POINTER ? 700 : 1600) * 1024 * 1024;
-  setupGltfLoader(tiles);
+  tiles.errorTarget = LIMITS.errorTarget;
+  // 注意: 3d-tiles-renderer 0.5.3 のLRUキャッシュ・ダウンロード/展開キューはモジュール共有の1個ずつ
+  // (全TilesRendererで同じもの)。このアプリで同時に作るのは1個だけなので、ここで上書きしてよい。
+  // 最小値を先に下げてから最大値を設定する(最小>最大の瞬間を作らない)。
+  if (LIMITS.cacheMinBytes) tiles.lruCache.minBytesSize = LIMITS.cacheMinBytes;
+  tiles.lruCache.maxBytesSize = LIMITS.cacheMaxBytes;
+  if (LIMITS.downloadJobs) tiles.downloadQueue.maxJobsPerOrigin = LIMITS.downloadJobs;
+  if (LIMITS.parseJobs) tiles.parseQueue.maxJobs = LIMITS.parseJobs;
+  if (LIMITS.areaRadiusM) tiles.registerPlugin(createAreaLimitPlugin(TILESET_URL, STATION, LIMITS.areaRadiusM));
+  if (LIMITS.leafTextureMaxPx) {
+    tiles.registerPlugin(createTextureLimitPlugin(LIMITS.leafTextureMaxPx, LIMITS.parentTextureMaxPx || LIMITS.leafTextureMaxPx));
+  }
+  const { dracoLoader } = setupGltfLoader(tiles);
   scene.add(tiles.group);
 
   const controls = new GlobeControls(scene, camera, renderer.domElement);
@@ -181,7 +323,7 @@ export async function mountShibuyaHQ(container, opts = {}) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
   controls.minDistance = 40;
-  controls.maxDistance = MAX_CAMERA_DISTANCE_M;
+  controls.maxDistance = LIMITS.maxCameraDistanceM;
   controls.enabled = false; // introRotation()の間はこちらでカメラを動かさない(stopIntroで有効化)
 
   function positionCameraAt(azimuthRad, distanceM, elevationDeg) {
@@ -360,18 +502,40 @@ export async function mountShibuyaHQ(container, opts = {}) {
 
   opts.onReady?.();
 
+  // 閉じるときに呼ぶ。描画ループを止め、タイル(テクスチャ・形状)・形状展開用Worker・WebGLの
+  // 描画領域をすべて手放す。自分が作った要素だけを外す(閉じた直後に開き直した新しい表示を消さないため)。
   function destroy() {
+    if (destroyed) return;
     destroyed = true;
     resizeObserver.disconnect();
-    tiles.dispose();
+    controls.dispose();
+    tiles.dispose(); // 読み込んだタイルのテクスチャ(ImageBitmapも)・形状・マテリアルを解放
+    dracoLoader.dispose(); // 形状の展開用Workerを終了
+    for (const role of Object.keys(pins)) {
+      pins[role].mesh.geometry.dispose();
+      pins[role].mesh.material.dispose();
+    }
+    if (connector) {
+      connector.geometry.dispose();
+      connector.material.dispose();
+    }
+    ground.geometry.dispose();
+    ground.material.dispose();
     renderer.dispose();
-    for (const role of Object.keys(pins)) pins[role].labelEl.remove();
-    container.innerHTML = "";
+    renderer.forceContextLoss(); // WebGLの描画領域をすぐ返す(次に開くと新しく作る)
+    canvas.remove();
+    labelLayer.remove();
+    progressOverlay.remove();
+    delete container.dataset.hqStatus;
   }
 
   return {
-    setMe: (lat, lng, floor) => upsertPin("me", lat, lng, floor, "自分"),
-    setPartner: (lat, lng, floor, name) => upsertPin("partner", lat, lng, floor, name || "相手"),
+    setMe: (lat, lng, floor) => {
+      if (!destroyed) upsertPin("me", lat, lng, floor, "自分");
+    },
+    setPartner: (lat, lng, floor, name) => {
+      if (!destroyed) upsertPin("partner", lat, lng, floor, name || "相手");
+    },
     destroy,
   };
 }

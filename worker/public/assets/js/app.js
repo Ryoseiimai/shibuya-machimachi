@@ -66,7 +66,7 @@
   var ASSETS_JS_BASE = "/assets/js/";
 // 意図的な簡略化: /assets/* は以前 immutable(1年)で配信していたため、中身を変えたら版の印を上げて
 // 古いキャッシュを持つ端末にも新しい版を読ませる(本格対応はファイル名へのハッシュ付与)。
-var ASSET_VERSION_QUERY = "?v=20260925b";
+var ASSET_VERSION_QUERY = "?v=20260925d";
   var selfPos = null;
   var extrasState = {
     shibuya3dModPromise: null, shibuya3dPromise: null, shibuya3d: null, nearestShops: null,
@@ -458,21 +458,38 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
   // 押した時に初めて動的importする(mountShibuya3D/mountARと同じ「一度だけmountしPromiseを
   // 使い回す」パターン)。
   function ensureHq() {
-    if (!extrasState.hqPromise) {
-      extrasState.hqPromise = import(ASSETS_JS_BASE + "shibuya3d-hq.mjs" + ASSET_VERSION_QUERY).then(function (mod) {
-        return mod.mountShibuyaHQ(document.getElementById("hq-mount"), {});
-      }).then(function (api) {
-        extrasState.hq = api;
-        // 既に分かっている自分・相手の位置があれば、開いた瞬間に反映する
-        // (承認済みのクライアント側state。refreshExtras()と同じデータ、新しい計算はしない)。
-        if (extrasState.lastMe) api.setMe(extrasState.lastMe.lat, extrasState.lastMe.lng, extrasState.lastMe.floor);
-        if (extrasState.lastPartner) {
-          api.setPartner(extrasState.lastPartner.lat, extrasState.lastPartner.lng, extrasState.lastPartner.floor, extrasState.lastPartner.name);
-        }
-        return api;
-      });
-    }
-    return extrasState.hqPromise;
+    if (extrasState.hqPromise) return extrasState.hqPromise;
+    var promise = import(ASSETS_JS_BASE + "shibuya3d-hq.mjs" + ASSET_VERSION_QUERY).then(function (mod) {
+      return mod.mountShibuyaHQ(document.getElementById("hq-mount"), {});
+    }).then(function (api) {
+      // 読み込み中に閉じられた場合は使わない(releaseHq()がこの後すぐ破棄する)
+      if (extrasState.hqPromise !== promise) return api;
+      extrasState.hq = api;
+      // 既に分かっている自分・相手の位置があれば、開いた瞬間に反映する
+      // (承認済みのクライアント側state。refreshExtras()と同じデータ、新しい計算はしない)。
+      if (extrasState.lastMe) api.setMe(extrasState.lastMe.lat, extrasState.lastMe.lng, extrasState.lastMe.floor);
+      if (extrasState.lastPartner) {
+        api.setPartner(extrasState.lastPartner.lat, extrasState.lastPartner.lng, extrasState.lastPartner.floor, extrasState.lastPartner.name);
+      }
+      return api;
+    });
+    extrasState.hqPromise = promise;
+    return promise;
+  }
+
+  // 閉じたら高画質ビューを破棄して、描画と読み込みを止め、テクスチャ・WebGLのメモリを手放す
+  // (隠すだけだと裏で描画・読み込みが続き、ARなど次の画面とメモリを取り合う。スマホで落ちる原因になる)。
+  // 次に開いたときは作り直す(建物データはHTTPキャッシュから読むので2回目以降は速い)。
+  function releaseHq() {
+    var pending = extrasState.hqPromise;
+    extrasState.hqPromise = null;
+    extrasState.hq = null;
+    if (!pending) return;
+    pending.then(function (api) {
+      api.destroy();
+    }).catch(function (err) {
+      console.error(err);
+    });
   }
 
   function bindHqOverlay() {
@@ -485,6 +502,7 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
     };
     closeBtn.onclick = function () {
       overlay.hidden = true;
+      releaseHq();
     };
   }
 
@@ -669,11 +687,21 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
       .catch(function () { showError("通信エラーが発生しました"); });
   }
 
+  // 「共有をやめる」の確認。アプリ版はボタンを日本語(キャンセル/やめる)にしたネイティブの確認を使う
+  // (アプリのWebViewのconfirm()はボタンが英語の Cancel/Ok 固定のため)。Web版はブラウザのconfirm。
+  function confirmStop() {
+    var message = "位置の共有をやめますか？";
+    if (host && host.confirm) return host.confirm({ message: message, okLabel: "やめる", cancelLabel: "キャンセル" });
+    return Promise.resolve(confirm(message));
+  }
+
   function bindMeetControls() {
     document.getElementById("approve-btn").onclick = function () { sendWs({ type: "approve" }); };
     document.getElementById("judge-btn").onclick = function () { sendWs({ type: "judge" }); };
     document.getElementById("stop-btn").onclick = function () {
-      if (confirm("位置の共有をやめますか？")) sendWs({ type: "stop" });
+      confirmStop().then(function (ok) {
+        if (ok) sendWs({ type: "stop" });
+      });
     };
     document.getElementById("floor-select").onchange = function (e) {
       if (e.target.value) sendWs({ type: "floor", floor: e.target.value });
