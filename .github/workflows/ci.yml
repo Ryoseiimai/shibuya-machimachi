@@ -37,5 +37,6 @@ jobs:
           node --check public/assets/js/vr.js
           node --check public/assets/js/geo.js
           node --check public/assets/js/shibuya3d.mjs
+          node --check public/assets/js/shibuya3d-hq.mjs
       - name: Unit tests (room state machine / geo / floors / jev)
         run: npm test

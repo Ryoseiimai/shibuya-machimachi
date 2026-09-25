@@ -120,8 +120,10 @@ test("host creates, guest joins via invite link, both approve, distance+arrow ap
   }).toPass({ timeout: 20_000 });
 
   // 09: 3D渋谷 — 自分・相手それぞれのピン(MapLibreのDOM Marker要素)が1本ずつ、計2本立つ。
+  // ".shibuya3d-pin"で絞る(".maplibregl-marker"だけだと2026-09-25追加のランドマークラベル
+  // 6件もヒットしてしまうため。shibuya3d.mjsのbuildLabelEl/buildLandmarkLabelEl参照)。
   await expect(async () => {
-    const pinCount = await pageA.locator("#map3d .maplibregl-marker").count();
+    const pinCount = await pageA.locator("#map3d .maplibregl-marker.shibuya3d-pin").count();
     expect(pinCount).toBe(2);
   }).toPass({ timeout: 20_000 });
 

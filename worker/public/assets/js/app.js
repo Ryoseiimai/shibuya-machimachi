@@ -54,6 +54,7 @@
   var extrasState = {
     shibuya3dModPromise: null, shibuya3dPromise: null, shibuya3d: null, nearestShops: null,
     arPromise: null, ar: null, focused: false, vrChecked: false,
+    hqPromise: null, hq: null, lastMe: null, lastPartner: null,
   };
 
   // worker/src/floors.js の floorLabelToInt と同じロジック(クライアントはサーバー側の
@@ -350,8 +351,10 @@
     var meFloor = floorLabelToInt(state.self && state.self.floor);
     var meFloorInt = meFloor == null ? 1 : meFloor;
 
+    extrasState.lastMe = { lat: selfPos.lat, lng: selfPos.lng, floor: meFloorInt };
     ensureShibuya3d().then(function (api) { api.setMe(selfPos.lat, selfPos.lng, meFloorInt); });
     if (extrasState.ar) extrasState.ar.setMe(selfPos.lat, selfPos.lng, meFloorInt);
+    if (extrasState.hq) extrasState.hq.setMe(selfPos.lat, selfPos.lng, meFloorInt);
 
     if (state.distance_m == null || state.bearing_deg == null) return; // 相手の位置はまだ届いていない
 
@@ -363,11 +366,13 @@
       // 相手の推定座標 = 自分の実座標 + サーバーから届いた距離・方位(destinationPoint)。
       // 相手の生座標がネットワーク越しに届いているわけではない(このファイル冒頭のコメント参照)。
       var p = geoMod.destinationPoint(selfPos.lat, selfPos.lng, state.bearing_deg, state.distance_m);
+      extrasState.lastPartner = { lat: p.lat, lng: p.lng, floor: partnerFloorInt, name: partnerName };
       ensureShibuya3d().then(function (api) {
         api.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
         if (!extrasState.focused) { api.focusBoth(); extrasState.focused = true; } // 初回だけ2人が収まる距離へ(以後は手動操作を尊重)
       });
       if (extrasState.ar) extrasState.ar.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
+      if (extrasState.hq) extrasState.hq.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
       updateShopsList(p.lat, p.lng);
     });
   }
@@ -426,6 +431,41 @@
     closeBtn.onclick = function () {
       overlay.hidden = true;
       if (extrasState.ar) extrasState.ar.stop();
+    };
+  }
+
+  // 「高画質で見る」: PLATEAU LOD2テクスチャ付き3D Tiles(shibuya3d-hq.mjs、three.js+
+  // 3d-tiles-renderer自ホスト)を全画面表示する。数十MB規模のデータなので、AR同様ボタンを
+  // 押した時に初めて動的importする(mountShibuya3D/mountARと同じ「一度だけmountしPromiseを
+  // 使い回す」パターン)。
+  function ensureHq() {
+    if (!extrasState.hqPromise) {
+      extrasState.hqPromise = import(ASSETS_JS_BASE + "shibuya3d-hq.mjs").then(function (mod) {
+        return mod.mountShibuyaHQ(document.getElementById("hq-mount"), {});
+      }).then(function (api) {
+        extrasState.hq = api;
+        // 既に分かっている自分・相手の位置があれば、開いた瞬間に反映する
+        // (承認済みのクライアント側state。refreshExtras()と同じデータ、新しい計算はしない)。
+        if (extrasState.lastMe) api.setMe(extrasState.lastMe.lat, extrasState.lastMe.lng, extrasState.lastMe.floor);
+        if (extrasState.lastPartner) {
+          api.setPartner(extrasState.lastPartner.lat, extrasState.lastPartner.lng, extrasState.lastPartner.floor, extrasState.lastPartner.name);
+        }
+        return api;
+      });
+    }
+    return extrasState.hqPromise;
+  }
+
+  function bindHqOverlay() {
+    var overlay = document.getElementById("hq-fullscreen");
+    var openBtn = document.getElementById("hq-open-btn");
+    var closeBtn = document.getElementById("hq-close-btn");
+    openBtn.onclick = function () {
+      overlay.hidden = false;
+      ensureHq();
+    };
+    closeBtn.onclick = function () {
+      overlay.hidden = true;
     };
   }
 
@@ -640,6 +680,7 @@
   function main() {
     bindMeetControls();
     bindArOverlay();
+    bindHqOverlay();
     bindRestartButtons();
     bindInAppBrowserBanner();
     // WSが止まっていても「最終更新から何秒経ったか」の表示(通信切れバナー・古い位置の薄表示)を

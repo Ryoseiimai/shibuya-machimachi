@@ -134,6 +134,18 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     background: rgba(30,30,34,0.85); color: #fff; border: none; border-radius: 12px;
     padding: 12px; font-size: 13px; font-weight: 700; z-index: 20;
   }
+  .hq-fullscreen { position: fixed; inset: 0; background: #0b1114; z-index: 1000; }
+  .hq-fullscreen[hidden] { display: none; }
+  #hq-mount { position: absolute; inset: 0; }
+  .hq-close-btn {
+    position: absolute; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 14px;
+    width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.55);
+    color: #fff; font-size: 18px; border: none; z-index: 20;
+  }
+  .hq-attribution {
+    position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
+    text-align: center; font-size: 10.5px; color: rgba(255,255,255,0.75); z-index: 20; pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -279,6 +291,7 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
       <div class="block-label">3D渋谷</div>
       <div class="map3d" id="map3d"></div>
       <button type="button" id="ar-open-btn" class="secondary" style="margin-top:10px;" disabled>ARで探す(読み込み中…)</button>
+      <button type="button" id="hq-open-btn" class="secondary" style="margin-top:8px;">高画質で見る</button>
     </div>
     <div class="attribution-footer">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）／地図: 地理院タイル／店舗: © OpenStreetMap contributors (ODbL)</div>
   </section>
@@ -289,6 +302,12 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
   <div id="ar-mount"></div>
   <button type="button" class="ar-close-btn" id="ar-close-btn" aria-label="閉じる">✕</button>
   <button type="button" class="ar-vr-btn" id="ar-vr-btn" style="display:none;">VRメガネで見る(実験的・対応端末のみ)</button>
+</div>
+
+<div class="hq-fullscreen" id="hq-fullscreen" hidden>
+  <div id="hq-mount"></div>
+  <button type="button" class="hq-close-btn" id="hq-close-btn" aria-label="閉じる">✕</button>
+  <div class="hq-attribution">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）</div>
 </div>
 
 <script src="/assets/js/app.js" defer></script>

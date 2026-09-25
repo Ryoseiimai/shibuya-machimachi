@@ -25,6 +25,11 @@
 // pins looked buried in nearby buildings: default/focus pitch 60->50 degrees, building
 // fill-extrusion-opacity 0.88->0.6, and an explicit z-index on marker labels. See
 // DEFAULT_PITCH_DEG / BUILDING_OPACITY / LABEL_Z_INDEX below. Not back-ported upstream.
+//
+// 2026-09-25 見た目最高品質化: 建物の白〜淡いグレーのグラデ+光源+空、主要ランドマークの
+// ラベル/強調、ピンの発光演出、2人を結ぶ点線、初回のゆっくりした回り込みカメラを追加。
+// 詳細は各定数のコメントを参照(「高画質で見る」ボタンから開く別ビュー本体はshibuya3d-hq.mjs、
+// PLATEAU LOD2テクスチャ付き3D Tiles担当で、このファイルは軽量な既定ビューのみを扱う)。
 
 import {
   Map as MapLibreMap,
@@ -52,6 +57,35 @@ const PILLAR_HALF_SIZE_M = 4; // pillar footprint is an 8m x 8m square
 const DEFAULT_PITCH_DEG = 50;
 const BUILDING_OPACITY = 0.6;
 const LABEL_Z_INDEX = "50"; // ラベルを常に最前面にする(念のため明示。DOM Markerは既定でcanvasより上)
+
+// このアプリ唯一のブランドアクセント色(worker/src/html.jsの--brand-orangeと同じ値)。
+// 3D内で新しい色を増やさず、強調したい箇所は必ずこの色だけを使う(2026-09-25 見た目最高品質化の方針)。
+const ACCENT_COLOR = "#c8431f";
+
+// 主要ランドマークのうち、PLATEAU/OSM由来のbuildings_shibuya_1500m.geojsonのname属性と
+// 実際に一致する建物だけ、ポリゴンの色そのものをACCENT_COLORで強調する(=データに基づく強調)。
+const LANDMARK_ACCENT_NAMES = ["渋谷ヒカリエ", "渋谷ストリーム"];
+
+// 主要ランドマークのラベル表示専用データ(強調用ではなくラベル配置用)。上のLANDMARK_ACCENT_NAMESの
+// 2件はbuildings geojson側に実座標があるためそちらの重心を使い、残り4件(スクランブルスクエア/
+// SHIBUYA109/フクラス/ハチ公像)はPLATEAU/OSMデータにname属性がないため、公知の概算座標・高さを
+// ここに直接持たせる(意図的な簡略化: 建物ポリゴンとの自動突合はしない。ラベルの位置精度は
+// 数十m程度の誤差を許容する「目印」用途。本格的に合わせるならOSMのlanduse/POIデータの入口を
+// scripts/fetch_buildings.py側に増やすのが次の一手)。
+const LANDMARKS = [
+  { name: "渋谷スクランブルスクエア", lat: 35.6585, lng: 139.7016, heightM: 230 },
+  { name: "渋谷ヒカリエ", lat: 35.659213, lng: 139.703826, heightM: 173.6 },
+  { name: "SHIBUYA109", lat: 35.659, lng: 139.6983, heightM: 45 },
+  { name: "渋谷ストリーム", lat: 35.657282, lng: 139.703035, heightM: 171.3 },
+  { name: "渋谷フクラス", lat: 35.6595, lng: 139.698, heightM: 130 },
+  { name: "ハチ公像", lat: 35.659, lng: 139.7004, heightM: 2 },
+];
+
+// 初回マウント時、ピン(=自分・相手の位置)がまだ無い間だけ再生する、ゆっくり回り込む
+// 演出カメラ。ユーザーが地図を操作するか、実データ(setMe/setPartner)が届いた時点で即停止する
+// (「操作したら止める」という仕様どおり。回り続けると距離を読みたいユーザーの邪魔になるため)。
+const INTRO_PITCH_DEG = 60;
+const INTRO_BEARING_DEG_PER_SEC = 3; // 360度を約2分かけて一周する速さ
 
 // focusBothのfitBoundsパディングは、コンテナの実サイズに対する比率で決める(固定px値だと、
 // このコンポーネントを小さい枠(渋谷マチマチ本体では.map3d=高さ280pxの縦横比が大きく違う枠)に
@@ -161,6 +195,15 @@ function floorInfo(floor) {
   return { heightM: floorNum * FLOOR_HEIGHT_M, label: `${floorNum}F`, basement: false };
 }
 
+// #rrggbb -> "rgba(r,g,b,a)"。ピンのグロー(box-shadow/drop-shadow)に使う。
+// ACCENT_COLOR/ME_COLOR/PARTNER_COLOR等、常に#rrggbb形式の定数にしか適用しないため
+// 3桁hexや色名には対応しない(意図的な簡略化。ユーザー入力を扱わないので十分)。
+function hexToRgba(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // ---------- CSS / style setup ----------
 
 function ensureMaplibreCss() {
@@ -172,9 +215,30 @@ function ensureMaplibreCss() {
   document.head.appendChild(link);
 }
 
+// ピン先端の発光アニメーション用の@keyframesを1回だけ注入する(buildLabelElのglow要素が使う)。
+let pulseStyleInjected = false;
+function ensurePulseKeyframes() {
+  if (pulseStyleInjected) return;
+  pulseStyleInjected = true;
+  const style = document.createElement("style");
+  style.setAttribute("data-shibuya3d-pulse", "1");
+  style.textContent = `@keyframes shibuya3d-pin-pulse{0%,100%{opacity:.6;transform:scale(1);}50%{opacity:1;transform:scale(1.3);}}`;
+  document.head.appendChild(style);
+}
+
 function buildStyle() {
   return {
     version: 8,
+    // 上品な白灰色の建物に立体感を出すための光源(側面の陰影)と、地平線側を淡く霞ませる空。
+    // どちらもMapLibre GL JSの標準style spec機能(light/sky)で、追加の外部リソースは不要。
+    light: { anchor: "viewport", color: "#ffffff", intensity: 0.38, position: [1.4, 210, 42] },
+    sky: {
+      "sky-color": "#bfe1f5",
+      "horizon-color": "#eef3f1",
+      "fog-color": "#eef3f1",
+      "sky-horizon-blend": 0.5,
+      "horizon-fog-blend": 0.65,
+    },
     sources: {
       "gsi-pale": {
         type: "raster",
@@ -191,28 +255,80 @@ function buildStyle() {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       },
+      "pins-glow": {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      },
+      "pins-line": {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      },
     },
     layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#e9eef1" } },
+      { id: "bg", type: "background", paint: { "background-color": "#eef1f3" } },
       { id: "gsi-pale-layer", type: "raster", source: "gsi-pale" },
       {
         id: "buildings-3d",
         type: "fill-extrusion",
         source: "buildings",
         paint: {
+          // 白〜淡いグレーの上品なグラデ(建物の高さ基準)。ランドマーク2件(LANDMARK_ACCENT_NAMES、
+          // buildings geojsonのname属性と一致するもののみ)だけ、このアプリ唯一のアクセント色
+          // (ACCENT_COLOR)で塗って強調する。新しい色は増やさない。
           "fill-extrusion-color": [
-            "interpolate",
-            ["linear"],
-            ["get", "height"],
-            0, "#d7dee3",
-            20, "#b8c4cc",
-            60, "#93a4b0",
-            120, "#71889a",
-            220, "#4c6478",
+            "case",
+            ["in", ["get", "name"], ["literal", LANDMARK_ACCENT_NAMES]],
+            ACCENT_COLOR,
+            [
+              "interpolate", ["linear"], ["get", "height"],
+              0, "#f7f8fa",
+              20, "#eef0f3",
+              60, "#dee2e6",
+              120, "#c7cdd3",
+              220, "#a6aeb7",
+            ],
           ],
           "fill-extrusion-height": ["get", "height"],
           "fill-extrusion-base": 0,
           "fill-extrusion-opacity": BUILDING_OPACITY,
+          "fill-extrusion-vertical-gradient": true,
+        },
+      },
+      // ピンの足元の発光ハロー(外側=柔らかくぼかした大きい光暈、内側=芯の強い光)。
+      // fill-extrusionの「光る柱」を、地面に落ちる光だまりで補強する(pins-3dより先に描く)。
+      {
+        id: "pins-glow-outer",
+        type: "circle",
+        source: "pins-glow",
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 12, 19, 48],
+          "circle-blur": 1,
+          "circle-opacity": 0.32,
+        },
+      },
+      {
+        id: "pins-glow-inner",
+        type: "circle",
+        source: "pins-glow",
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 4, 19, 16],
+          "circle-blur": 0.5,
+          "circle-opacity": 0.55,
+        },
+      },
+      // 2人のピンの間を結ぶ点線(地表面。アクセント色のみ使用)。
+      {
+        id: "pins-line",
+        type: "line",
+        source: "pins-line",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": ACCENT_COLOR,
+          "line-width": 2.4,
+          "line-dasharray": [1.4, 1.6],
+          "line-opacity": 0.85,
         },
       },
       {
@@ -224,6 +340,7 @@ function buildStyle() {
           "fill-extrusion-height": ["get", "heightM"],
           "fill-extrusion-base": 0,
           "fill-extrusion-opacity": 0.96,
+          "fill-extrusion-vertical-gradient": true,
         },
       },
     ],
@@ -234,17 +351,44 @@ function buildStyle() {
 
 function buildLabelEl(text, color) {
   const el = document.createElement("div");
+  // shibuya3d-pin: 自分/相手のピンだけに付ける印(MapLibreのMarkerは渡した要素にmaplibregl-marker
+  // クラスを足すだけなので、ランドマークラベル(shibuya3d-landmark、下のbuildLandmarkLabelEl)と
+  // 見分けが付くようにする。e2e/tests/flow.spec.jsがこのクラスでピン数(=2)を数えている。
+  el.className = "shibuya3d-pin";
   el.style.cssText = `display:flex;flex-direction:column;align-items:center;pointer-events:none;font-family:-apple-system,'Hiragino Sans',sans-serif;z-index:${LABEL_Z_INDEX};`;
 
   const card = document.createElement("div");
-  card.style.cssText = `background:${color};color:#fff;padding:4px 9px;border-radius:7px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 5px rgba(0,0,0,.45);`;
+  // 通常の影に加えて、ピンの色でうっすら光らせる(box-shadowを2重に。新しい色は増やさずcolor自体を使う)。
+  card.style.cssText = `background:${color};color:#fff;padding:4px 9px;border-radius:7px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 5px rgba(0,0,0,.45), 0 0 10px 1px ${hexToRgba(color, 0.55)};`;
   card.textContent = text;
 
   const tail = document.createElement("div");
-  tail.style.cssText = `width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${color};margin-top:-1px;`;
+  // ピンの先端(=柱の頂点、updateMarkerOffsetsでの持ち上げ位置)にdrop-shadowで光暈を足し、
+  // 「光る柱」の光源に見せる。filterはレイアウトサイズに影響しないため、anchor:"bottom"の
+  // 基準位置(このtailの下端)はズレない。
+  tail.style.cssText = `width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${color};margin-top:-1px;filter:drop-shadow(0 0 5px ${color}) drop-shadow(0 0 11px ${hexToRgba(color, 0.8)});`;
+
+  const glow = document.createElement("div");
+  glow.style.cssText = `position:absolute;left:50%;bottom:-4px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:${color};box-shadow:0 0 8px 3px ${color};animation:shibuya3d-pin-pulse 2.4s ease-in-out infinite;pointer-events:none;`;
+  el.style.position = "relative"; // glow(position:absolute)の基準にする。通常フローの高さには影響しない
+  ensurePulseKeyframes();
 
   el.appendChild(card);
   el.appendChild(tail);
+  el.appendChild(glow);
+  return el;
+}
+
+// ランドマークのラベルは人物ピンより控えめに(小さく・低コントラスト)し、主役(2人のピン)を
+// 邪魔しないようにする。発光演出も付けない。
+function buildLandmarkLabelEl(text) {
+  const el = document.createElement("div");
+  el.className = "shibuya3d-landmark";
+  el.style.cssText = `pointer-events:none;font-family:-apple-system,'Hiragino Sans',sans-serif;z-index:40;`;
+  const card = document.createElement("div");
+  card.style.cssText = `background:rgba(255,255,255,0.88);color:#4a4038;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:700;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.25);border:1px solid rgba(0,0,0,0.06);`;
+  card.textContent = text;
+  el.appendChild(card);
   return el;
 }
 
@@ -320,6 +464,7 @@ export async function mountShibuya3D(el, opts = {}) {
 
   function refreshPinsSource() {
     const features = [];
+    const glowFeatures = [];
     for (const role of ["me", "partner"]) {
       const p = pinsState[role];
       if (!p) continue;
@@ -328,9 +473,33 @@ export async function mountShibuya3D(el, opts = {}) {
         properties: { role, heightM: p.heightM, color: p.color },
         geometry: { type: "Polygon", coordinates: [squarePolygon(p.lat, p.lng, PILLAR_HALF_SIZE_M)] },
       });
+      glowFeatures.push({
+        type: "Feature",
+        properties: { role, color: p.color },
+        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      });
     }
     const src = map.getSource("pins");
     if (src) src.setData({ type: "FeatureCollection", features });
+    const glowSrc = map.getSource("pins-glow");
+    if (glowSrc) glowSrc.setData({ type: "FeatureCollection", features: glowFeatures });
+
+    const lineFeatures = [];
+    if (pinsState.me && pinsState.partner) {
+      lineFeatures.push({
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [pinsState.me.lng, pinsState.me.lat],
+            [pinsState.partner.lng, pinsState.partner.lat],
+          ],
+        },
+      });
+    }
+    const lineSrc = map.getSource("pins-line");
+    if (lineSrc) lineSrc.setData({ type: "FeatureCollection", features: lineFeatures });
   }
 
   function updateMarkerOffsets() {
@@ -363,10 +532,57 @@ export async function mountShibuya3D(el, opts = {}) {
       if (!p) continue;
       p.marker.setOffset([0, -(baseLift[role] + extraLift[role])]);
     }
+
+    // ランドマークラベルも同じ考え方で、建物の概算の高さぶんだけ画面上で持ち上げる
+    // (屋上付近にラベルが浮かんで見えるようにする。人物ピンより優先度は低いので重なり回避はしない)。
+    for (const lm of landmarkMarkers) {
+      const mpp = metersPerPixelAt(lm.lat, zoom);
+      const lift = (lm.heightM / mpp) * Math.sin(pitchRad);
+      lm.marker.setOffset([0, -lift]);
+    }
   }
   map.on("render", updateMarkerOffsets);
 
+  const landmarkMarkers = LANDMARKS.map((lm) => {
+    const marker = new Marker({ element: buildLandmarkLabelEl(lm.name), anchor: "bottom" })
+      .setLngLat([lm.lng, lm.lat])
+      .addTo(map);
+    return { ...lm, marker };
+  });
+
+  // ---- 初回だけ再生する、ゆっくり回り込む演出カメラ(ピッチ60度)。 ----
+  // 操作(ドラッグ/ズーム/回転/ピッチのユーザー操作開始イベント)か、実データ到着(setMe/setPartner)で
+  // 即停止する。停止後にDEFAULT_PITCH_DEG(50度、既存のピン視認性チューニング)へ戻すのはfocusBoth
+  // (実データ到着時に呼ばれる)に任せる。
+  let introActive = true;
+  let introRafId = null;
+  function stopIntro() {
+    if (!introActive) return;
+    introActive = false;
+    if (introRafId != null) cancelAnimationFrame(introRafId);
+  }
+  function startIntro() {
+    let lastTs = null;
+    function tick(ts) {
+      if (!introActive) return;
+      if (lastTs != null) {
+        const dtSec = (ts - lastTs) / 1000;
+        map.setBearing(map.getBearing() + INTRO_BEARING_DEG_PER_SEC * dtSec);
+      }
+      lastTs = ts;
+      introRafId = requestAnimationFrame(tick);
+    }
+    map.setPitch(INTRO_PITCH_DEG);
+    introRafId = requestAnimationFrame(tick);
+  }
+  for (const evt of ["dragstart", "zoomstart", "rotatestart", "pitchstart", "boxzoomstart"]) {
+    map.on(evt, (e) => {
+      if (e && e.originalEvent) stopIntro(); // ユーザー操作由来のイベントのみ(プログラムからのsetBearing等では発火しない)
+    });
+  }
+
   function upsertPin(role, lat, lng, floor, displayName) {
+    stopIntro();
     const { heightM, label, basement } = floorInfo(floor);
     const color = role === "me" ? (basement ? ME_BASEMENT_COLOR : ME_COLOR) : basement ? PARTNER_BASEMENT_COLOR : PARTNER_COLOR;
     const text = `${displayName} ・ ${label}`;
@@ -400,7 +616,7 @@ export async function mountShibuya3D(el, opts = {}) {
       south = Math.min(south, lat);
       north = Math.max(north, lat);
     }
-    // パディングはコンテナの実サイズの比率(FOCUS_PADDING_RATIO)から計算する(理由は定数の
+    // パディングはコンテナの実サイズの比率(FOCUS_PADDING_RATIO)から決める(理由は定数の
     // コメント参照)。マーカーのラベルpillが左右にはみ出す分だけ、横方向にも最小限の余白を残す
     // (ラベル文字幅から見積もった半分の幅を下限にする。2026-09-24 UXレビュー対応)。
     const rect = container.getBoundingClientRect();
@@ -420,13 +636,16 @@ export async function mountShibuya3D(el, opts = {}) {
   }
 
   function destroy() {
+    stopIntro();
     map.off("render", updateMarkerOffsets);
     if (pinsState.me?.marker) pinsState.me.marker.remove();
     if (pinsState.partner?.marker) pinsState.partner.marker.remove();
+    for (const lm of landmarkMarkers) lm.marker.remove();
     map.remove();
   }
 
   await new Promise((resolve) => map.on("load", resolve));
+  startIntro();
   opts.onReady?.();
 
   return {

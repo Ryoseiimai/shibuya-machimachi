@@ -8,21 +8,37 @@
  * AR(three.js, 同じくvendor自ホスト)・地理院タイルのために最小限だけ広げている:
  *   - script-src 'self'のみ('unsafe-inline'なし。旧インラインスクリプトは
  *     worker/public/assets/js/app.js に外部ファイル化済み)
+ *   - script-src 'wasm-unsafe-eval'は、「高画質で見る」ビュー(shibuya3d-hq.mjs、
+ *     PLATEAU LOD2テクスチャ付き3D Tiles)がジオメトリ圧縮(KHR_draco_mesh_compression、
+ *     PLATEAU配信タイルのextensionsRequired)を復号するのに使うDRACOLoaderのWebAssembly
+ *     デコーダのために必要(2026-09-25実測: 'wasm-unsafe-eval'なしのscript-src 'self'だけだと
+ *     このChromiumではWebAssembly.instantiateがCSP違反で例外を投げ、Draco圧縮タイルの
+ *     デコードが全滅する)。'unsafe-eval'(任意の文字列evalを許可)とは別のCSP Level 3の
+ *     トークンで、WebAssemblyのコンパイル/インスタンス化しか許可しない(test/security-headers.test.js
+ *     は'unsafe-eval'そのものが無いことをトークン単位でチェックしている)。
  *   - style-src 'unsafe-inline'は、MapLibre GL本体がマーカー位置・canvas変形を
  *     常にインラインstyleで書き換える実装のため必須(ライブラリ側の既知の制約。
  *     script-srcとは異なりstyle-srcのXSSリスクは低いため許容する)
- *   - worker-src blob: は MapLibre GL がタイル解析用Web WorkerをBlob URLから
- *     生成するために必要
+ *   - worker-src blob: は MapLibre GL がタイル解析用Web Worker、および
+ *     DRACOLoaderがDraco復号用Web WorkerをどちらもBlob URLから生成するために必要
  *   - img-src/connect-src に https://cyberjapandata.gsi.go.jp を追加(地理院タイル)
+ *   - connect-src に https://assets.cms.plateau.reearth.io を追加(「高画質で見る」が
+ *     取得するPLATEAU渋谷区13113 LOD2 3D Tilesのtileset.json/b3dmタイル本体。国交省
+ *     PLATEAUデータカタログAPIが返す配信元で、認証不要・Access-Control-Allow-Origin: *の
+ *     公開GCSバケット)
+ *   - connect-src に blob: を追加(three.jsのGLTFLoaderが、b3dm/glTFに埋め込まれたテクスチャ
+ *     画像をbufferViewから取り出す際、一度Blob化してfetch()する実装のため。2026-09-25実測:
+ *     blob:が無いと「高画質で見る」のテクスチャが全滅する。img-srcのblob:とは別に、
+ *     fetchの接続先を許可するconnect-src側にも要る)
  *   - connect-src の 'self' はws/wss相互(同一オリジンの待ち合わせ用WebSocket)も
  *     カバーする(CSP仕様上 'self' はws<->http, wss<->httpsのスキームを同一視する)
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://cyberjapandata.gsi.go.jp",
-  "connect-src 'self' https://cyberjapandata.gsi.go.jp",
+  "connect-src 'self' blob: https://cyberjapandata.gsi.go.jp https://assets.cms.plateau.reearth.io",
   "worker-src 'self' blob:",
   "font-src 'self'",
   "object-src 'none'",
