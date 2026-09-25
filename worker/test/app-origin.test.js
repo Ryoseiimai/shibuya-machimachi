@@ -113,7 +113,10 @@ for (const [path, mustInclude] of [
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type"), /text\/html/);
     assert.equal(res.headers.get("Content-Security-Policy"), CONTENT_SECURITY_POLICY);
-    const text = await res.text();
+    const raw = await res.text();
+    // 日本語は文節の区切りに<wbr>が入る(文節の途中で改行しないため)。文言の確認は<wbr>を除いて行う
+    assert.ok(raw.includes("<wbr>"), `${path} の日本語に文節区切り(<wbr>)が入っている`);
+    const text = raw.replaceAll("<wbr>", "");
     for (const s of mustInclude) assert.ok(text.includes(s), `${path} に「${s}」が含まれる`);
     assert.ok(!/<script/i.test(text), `${path} は<script>を含まない`);
   });
