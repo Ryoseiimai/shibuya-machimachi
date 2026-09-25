@@ -10,7 +10,19 @@
  *   - レート制限はIPのSHA-256ハッシュをキーにする: worker/src/index.js hashClientIp()
  * <script>は使わない(CSPのscript-src 'self'のまま表示できる静的HTML)。
  */
+import { Parser, jaModel } from "budoux";
 import { SHIBUYA_RADIUS_M, ROOM_TTL_MS } from "./constants.js";
+
+// 日本語の文節の途中で改行しないよう、文節の区切りに<wbr>を入れる(lp.js と同じBudouX)。
+// タグの中身(属性)と日本語を含まない部分(英語・URL・メール)には触らない。
+const jaParser = new Parser(jaModel);
+const JA_CHAR_RE = /[\u3040-\u30ff\u3400-\u9fff]/;
+function wbrHtml(html) {
+  return html
+    .split(/(<[^>]+>)/)
+    .map((part) => (part.startsWith("<") || !JA_CHAR_RE.test(part) ? part : jaParser.parse(part).join("<wbr>")))
+    .join("");
+}
 
 const RADIUS_KM = (SHIBUYA_RADIUS_M / 1000).toFixed(1);
 const TTL_HOURS = ROOM_TTL_MS / (60 * 60 * 1000);
@@ -37,6 +49,8 @@ const PAGE_STYLE = `
   h2 { font-size: 18px; margin: 30px 0 8px; line-height: 1.5; }
   h3 { font-size: 16px; margin: 20px 0 6px; }
   p, li { font-size: 15px; }
+  /* 文節の途中では改行しない(区切りは<wbr>)。それでも収まらない時だけ折り返す(lp.jsと同じ) */
+  h1, h2, h3, p, li { word-break: keep-all; overflow-wrap: anywhere; }
   ul { padding-left: 22px; }
   .card { background: #fff; border-radius: 16px; padding: 18px 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); margin: 14px 0; }
   .lang-sep { margin: 48px 0 0; padding-top: 8px; border-top: 2px solid #f0d9cc; }
@@ -57,7 +71,7 @@ function page({ title, lang = "ja", body }) {
 <body>
 <header><div class="wrap"><a href="/">← 渋谷マチマチ トップへ</a></div></header>
 <main class="wrap">
-${body}
+${wbrHtml(body)}
 </main>
 <footer><div class="wrap">
   <a href="/">トップ</a><a href="/privacy">プライバシーポリシー / Privacy</a><a href="/support">サポート / Support</a>
