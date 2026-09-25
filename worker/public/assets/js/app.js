@@ -50,6 +50,9 @@
   // 送ってよいと決めている情報(距離・方位)だけから作っているので、この復元によって
   // サーバー側の非交渉ルールを回避しているわけではない。
   var ASSETS_JS_BASE = "/assets/js/";
+// 意図的な簡略化: /assets/* は以前 immutable(1年)で配信していたため、中身を変えたら版の印を上げて
+// 古いキャッシュを持つ端末にも新しい版を読ませる(本格対応はファイル名へのハッシュ付与)。
+var ASSET_VERSION_QUERY = "?v=20260925b";
   var selfPos = null;
   var extrasState = {
     shibuya3dModPromise: null, shibuya3dPromise: null, shibuya3d: null, nearestShops: null,
@@ -292,7 +295,7 @@
   // geo.jsの読み込みの方が先に終わって「近くのお店」が空のまま固定される競合があった)。
   function ensureShibuya3dMod() {
     if (!extrasState.shibuya3dModPromise) {
-      extrasState.shibuya3dModPromise = import(ASSETS_JS_BASE + "shibuya3d.mjs").then(function (mod) {
+      extrasState.shibuya3dModPromise = import(ASSETS_JS_BASE + "shibuya3d.mjs" + ASSET_VERSION_QUERY).then(function (mod) {
         extrasState.nearestShops = mod.nearestShops;
         return mod;
       });
@@ -320,7 +323,7 @@
   // (iOSはユーザー操作コンテキストが切れると許可ダイアログを出さないため)。
   function ensureAr() {
     if (!extrasState.arPromise) {
-      extrasState.arPromise = import(ASSETS_JS_BASE + "ar.js").then(function (mod) {
+      extrasState.arPromise = import(ASSETS_JS_BASE + "ar.js" + ASSET_VERSION_QUERY).then(function (mod) {
         var api = mod.mountAR(document.getElementById("ar-mount"));
         extrasState.ar = api;
         var btn = document.getElementById("ar-open-btn");
@@ -340,7 +343,7 @@
   // AR部品のgeo.js(destinationPoint/normalizeAngleDiffなどの純粋関数)を読み込む。
   // ブラウザのESモジュールキャッシュにより、同じURLの2回目以降のimport()は再フェッチされない。
   function loadGeoMod() {
-    return import(ASSETS_JS_BASE + "geo.js");
+    return import(ASSETS_JS_BASE + "geo.js" + ASSET_VERSION_QUERY);
   }
 
   // WSの最新状態(lastState)と自分の実座標(selfPos)から、3D渋谷のピン・近くのお店・ARの
@@ -440,7 +443,7 @@
   // 使い回す」パターン)。
   function ensureHq() {
     if (!extrasState.hqPromise) {
-      extrasState.hqPromise = import(ASSETS_JS_BASE + "shibuya3d-hq.mjs").then(function (mod) {
+      extrasState.hqPromise = import(ASSETS_JS_BASE + "shibuya3d-hq.mjs" + ASSET_VERSION_QUERY).then(function (mod) {
         return mod.mountShibuyaHQ(document.getElementById("hq-mount"), {});
       }).then(function (api) {
         extrasState.hq = api;
@@ -475,7 +478,7 @@
   function offerVrButton(vrBtn) {
     if (extrasState.vrChecked) return;
     extrasState.vrChecked = true;
-    import(ASSETS_JS_BASE + "vr.js").then(function (vrMod) {
+    import(ASSETS_JS_BASE + "vr.js" + ASSET_VERSION_QUERY).then(function (vrMod) {
       return vrMod.isVrAvailable().then(function (mode) {
         if (!mode) return;
         vrBtn.style.display = "block";
