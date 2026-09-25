@@ -32,6 +32,8 @@ jobs:
           node --check src/lp.js
           node --check src/constants.js
           node --check src/security-headers.js
+          node --check src/app-origin.js
+          node --check src/legal.js
           node --check public/assets/js/app.js
           node --check public/assets/js/ar.js
           node --check public/assets/js/vr.js

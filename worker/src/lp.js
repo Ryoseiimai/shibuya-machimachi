@@ -326,6 +326,7 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
     <p class="footer-attribution">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC&nbsp;BY&nbsp;4.0）／地図: 地理院タイル／店舗: © OpenStreetMap&nbsp;contributors (ODbL)</p>
     <p class="footer-license">コードは MIT License で公開しています。</p>
     <p class="footer-links"><a href="https://github.com/Ryoseiimai/shibuya-machimachi">github.com/Ryoseiimai/shibuya-machimachi</a></p>
+    <p class="footer-links"><a href="/privacy">プライバシーポリシー</a>　<a href="/support">サポート</a></p>
   </div>
 </footer>
 

@@ -8,6 +8,9 @@
  *   GET  /api/rooms/:roomId/ws?role=&secret= WebSocket接続(以降のやり取りは全てこれ経由)
  *   GET  /                                    紹介LP(トップページ。作成画面ではない)
  *   GET  /new , GET /r/:roomId                スマホ用HTML画面(作成/参加。1枚をパスに関わらず配信)
+ *   GET  /privacy , GET /support             プライバシーポリシー・サポート(App Store掲載用)
+ *   GET  /.well-known/apple-app-site-association  iOSアプリのユニバーサルリンク設定(招待リンク)
+ *   OPTIONS /api/*                           iOSアプリ(capacitor://localhost)からのCORSプリフライト
  *
  * 実体のルーム管理は Durable Object(RoomDO, room-do.js)に委譲する。roomIdはこのWorker側で
  * crypto.randomUUID()由来のランダムな32桁16進文字列として発行し、
@@ -18,6 +21,8 @@ import { randomToken } from "./room.js";
 import { APP_HTML } from "./html.js";
 import { LP_HTML } from "./lp.js";
 import { withSecurityHeaders } from "./security-headers.js";
+import { PRIVACY_HTML, SUPPORT_HTML } from "./legal.js";
+import { appPreflightResponse, withAppCors, appleAppSiteAssociation } from "./app-origin.js";
 
 export { RoomDO };
 
@@ -89,8 +94,19 @@ async function handleCreateRoom(request, env) {
   return stub.fetch(initRequest);
 }
 
+function html(body) {
+  return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+// 静的なHTMLページ(GETのみ)。App Storeの掲載情報から参照される。
+const STATIC_PAGES = Object.freeze({ "/privacy": PRIVACY_HTML, "/support": SUPPORT_HTML });
+
 async function route(request, env) {
   const url = new URL(request.url);
+
+  // iOSアプリ(許可オリジンのみ)からの /api/* プリフライト。許可外は従来どおり404へ進む。
+  const preflight = appPreflightResponse(request);
+  if (preflight) return preflight;
 
   if (url.pathname === "/api/rooms" && request.method === "POST") {
     return handleCreateRoom(request, env);
@@ -104,12 +120,20 @@ async function route(request, env) {
   }
 
   if (request.method === "GET" && (url.pathname === "/new" || ROOM_PAGE_RE.test(url.pathname))) {
-    return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return html(APP_HTML);
+  }
+
+  if (request.method === "GET" && Object.hasOwn(STATIC_PAGES, url.pathname)) {
+    return html(STATIC_PAGES[url.pathname]);
+  }
+
+  if (request.method === "GET" && url.pathname === "/.well-known/apple-app-site-association") {
+    return json(appleAppSiteAssociation());
   }
 
   // トップページ("/")は作成画面ではなく紹介LP。「待ち合わせを作る」ボタンから/newへ誘導する。
   if (request.method === "GET" && url.pathname === "/") {
-    return new Response(LP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return html(LP_HTML);
   }
 
   return json({ error: "not found" }, 404);
@@ -117,9 +141,10 @@ async function route(request, env) {
 
 export default {
   // セキュリティヘッダ(H1/M5)はここで一元的に付与する。WebSocketアップグレード(101)は
-  // withSecurityHeaders内部で素通しされる。
+  // withSecurityHeaders内部で素通しされる。iOSアプリ(許可オリジンのみ)向けのCORSヘッダは
+  // /api/* の応答にだけ withAppCors で追加する(101はこちらも素通し)。
   async fetch(request, env) {
     const response = await route(request, env);
-    return withSecurityHeaders(response);
+    return withAppCors(request, withSecurityHeaders(response));
   },
 };
