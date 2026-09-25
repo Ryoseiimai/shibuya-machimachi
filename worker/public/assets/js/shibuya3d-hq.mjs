@@ -45,6 +45,10 @@ const STATION = { lat: 35.659, lng: 139.7005 };
 const DEG2RAD = Math.PI / 180;
 const FLOOR_HEIGHT_M = 3.5;
 const BASEMENT_PILLAR_HEIGHT_M = 5;
+// PLATEAUの3D Tilesは楕円体高(標高＋ジオイド高)で置かれているため、楕円体高0に地面を置くと建物が約50m浮く。
+// 意図的な簡略化: 地面とピンの基準を「渋谷駅付近の楕円体高」一定値に置く(ジオイド高 約36.7m＋駅付近の標高 約15m)。
+// 渋谷は谷地形なので坂の上の建物は最大20m程度浮いて見える。本格対応はPLATEAU地形(DEM)を読み込んで地点ごとの高さを使うこと。
+const GROUND_ELLIPSOIDAL_HEIGHT_M = 52;
 const ACCENT_COLOR = "#c8431f";
 const ME_COLOR = "#1e88e5";
 const PARTNER_COLOR = "#fb8c00";
@@ -149,7 +153,7 @@ export async function mountShibuyaHQ(container, opts = {}) {
   // ファイル冒頭コメント参照)。ステーション地点のENUフレームに合わせて向きを合わせる。
   const ellipsoid = WGS84_ELLIPSOID;
   const stationMatrix = new THREE.Matrix4();
-  ellipsoid.getEastNorthUpFrame(STATION.lat * DEG2RAD, STATION.lng * DEG2RAD, 0, stationMatrix);
+  ellipsoid.getEastNorthUpFrame(STATION.lat * DEG2RAD, STATION.lng * DEG2RAD, GROUND_ELLIPSOIDAL_HEIGHT_M, stationMatrix);
   const stationPos = new THREE.Vector3().setFromMatrixPosition(stationMatrix);
   const stationUp = new THREE.Vector3(0, 0, 1).transformDirection(stationMatrix);
 
@@ -223,7 +227,7 @@ export async function mountShibuyaHQ(container, opts = {}) {
   const pins = {};
   function pinWorldPos(lat, lng, floor) {
     const m = new THREE.Matrix4();
-    ellipsoid.getEastNorthUpFrame(lat * DEG2RAD, lng * DEG2RAD, 0, m);
+    ellipsoid.getEastNorthUpFrame(lat * DEG2RAD, lng * DEG2RAD, GROUND_ELLIPSOIDAL_HEIGHT_M, m);
     const ground2 = new THREE.Vector3().setFromMatrixPosition(m);
     const up2 = new THREE.Vector3(0, 0, 1).transformDirection(m);
     const heightM = floorHeightM(floor);
