@@ -30,6 +30,20 @@
   }
 
   var wsScheme = location.protocol === "https:" ? "wss:" : "ws:";
+  // iOSアプリ(app/src/native-bridge.js)が差し込むホスト機能。Web版では常にnullで、下の分岐は
+  // すべて従来どおり(同一オリジンのfetch/WebSocket・ブラウザ標準のAPI)になる。アプリでは画面を
+  // アプリ内に同梱して読み込むため、通信先(apiBase)だけ本番Workerの絶対URLを使う。
+  var host = window.MachimachiHost || null;
+  var API_BASE = (host && host.apiBase) || ""; // ""=同一オリジン(Web版)
+  var WS_BASE = API_BASE ? API_BASE.replace(/^http/, "ws") : wsScheme + "//" + location.host;
+  var PUBLIC_ORIGIN = API_BASE || location.origin; // 招待リンクのオリジン(アプリが無い相手もブラウザで開ける)
+  function apiFetch(path, init) {
+    return host && host.fetch ? host.fetch(API_BASE + path, init) : fetch(API_BASE + path, init);
+  }
+  function openSocket(url) {
+    return host && host.createSocket ? host.createSocket(url) : new WebSocket(url);
+  }
+  var judgeFoundNotified = false; // 「会えた!」の触覚フィードバックを1回だけ鳴らすため
   var ws = null;
   var lastState = null;
   var heading = 0;
@@ -84,8 +98,8 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
   function connectWs(roomId, role, secret, isReconnect) {
     currentConn = { roomId: roomId, role: role, secret: secret };
     if (!isReconnect) showOnly("loading");
-    var url = wsScheme + "//" + location.host + "/api/rooms/" + roomId + "/ws?role=" + role + "&secret=" + encodeURIComponent(secret);
-    ws = new WebSocket(url);
+    var url = WS_BASE + "/api/rooms/" + roomId + "/ws?role=" + role + "&secret=" + encodeURIComponent(secret);
+    ws = openSocket(url);
     ws.onopen = function () {
       wsConnected = true;
       disconnectedAt = null;
@@ -248,6 +262,8 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
     var judgeStatus = document.getElementById("judge-status");
     var judgeNote = document.getElementById("judge-note");
     if (state.judge && state.judge.found) {
+      if (!judgeFoundNotified && host && host.haptic) host.haptic("success");
+      judgeFoundNotified = true;
       var pct = state.judge.probability != null ? Math.round(state.judge.probability * 100) + "%" : "";
       judgeStatus.textContent = "会えた! " + pct;
       judgeStatus.className = "found";
@@ -496,6 +512,11 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
   }
 
   function startOrientation() {
+    // アプリ版は端末のコンパス(CoreLocationの方位)を直接使う。使えたら許可ボタンは出さない。
+    if (host && host.watchHeading && host.watchHeading(function (h) {
+      heading = h;
+      if (lastState && lastState.bearing_deg != null) applyArrowRotation(lastState.bearing_deg);
+    })) return;
     function onOrientation(e) {
       var h = null;
       if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
@@ -531,8 +552,9 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
   // 承認直後により速く距離を出したい本格対応が要る場合は、サーバー側WSの接続時に
   // クライアントの現在のwatchPosition購読を一度張り直す(stopPosition→watchPosition)方式が入口。
   function startGeolocation() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.watchPosition(
+    var geo = (host && host.geolocation) || navigator.geolocation; // アプリ版はOSの位置情報(ネイティブ)
+    if (!geo) return;
+    geo.watchPosition(
       function (pos) {
         // selfPos(自分の実座標)はこのブラウザ内でのみ使う(3D渋谷の自分ピン・ARのsetMe用)。
         // ネットワークには一切送信しない値であり、下のsendWsとは別物。
@@ -559,6 +581,7 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
   function bindShareButton(url, hostName) {
     document.getElementById("share-invite-btn").onclick = function () {
       var text = (hostName || "") + "さんから渋谷マチマチの招待です";
+      if (host && host.share) { host.share({ title: "渋谷マチマチ", text: text, url: url }); return; }
       if (navigator.share) {
         navigator.share({ title: "渋谷マチマチ", text: text, url: url }).catch(function () {});
       } else {
@@ -572,7 +595,7 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
     document.getElementById("create-btn").onclick = function () {
       var nickname = document.getElementById("create-nickname").value.trim();
       if (!nickname) { showError("ニックネームを入力してください"); return; }
-      fetch("/api/rooms", {
+      apiFetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nickname: nickname }),
@@ -583,7 +606,7 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
           return;
         }
         saveSession(data.roomId, "host", data.hostSecret);
-        var inviteUrl = location.origin + "/r/" + data.roomId + "?invite=" + data.inviteToken;
+        var inviteUrl = PUBLIC_ORIGIN + "/r/" + data.roomId + "?invite=" + data.inviteToken;
         history.replaceState(null, "", "/r/" + data.roomId);
         document.getElementById("invite-url-input").value = inviteUrl;
         buildShareLinks(inviteUrl, nickname);
@@ -616,7 +639,7 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
     if (!invite) { showError("このリンクだけでは参加できません。招待リンクを開いてください。"); return; }
 
     showOnly("loading");
-    fetch("/api/rooms/" + roomId + "/preview?invite=" + encodeURIComponent(invite))
+    apiFetch("/api/rooms/" + roomId + "/preview?invite=" + encodeURIComponent(invite))
       .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
       .then(function (res) {
         if (!res.data.ok) {
@@ -631,7 +654,7 @@ var ASSET_VERSION_QUERY = "?v=20260925b";
         document.getElementById("preview-join-btn").onclick = function () {
           var nickname = document.getElementById("preview-nickname").value.trim();
           if (!nickname) { showError("ニックネームを入力してください"); return; }
-          fetch("/api/rooms/" + roomId + "/join", {
+          apiFetch("/api/rooms/" + roomId + "/join", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ invite: invite, nickname: nickname }),

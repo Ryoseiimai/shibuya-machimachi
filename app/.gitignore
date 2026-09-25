@@ -1,0 +1,19 @@
+node_modules/
+www/
+ios/App/build/
+ios/DerivedData/
+ios/App/Pods/
+store/build/
+store/screenshots/raw/
+# 署名・鍵・ASC資格情報は絶対にコミットしない(手元の ~/.appstoreconnect 等から読む)
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+AuthKey_*
+**/asc-credentials*
+store/screenshots/
+store/shots/Shots.xcodeproj/
+store/shots/build/
+__pycache__/

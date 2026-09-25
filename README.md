@@ -16,6 +16,10 @@
 
 (スクリーンショットは `npm run dev` のローカル環境と、Playwright E2Eテスト([e2e/tests/flow.spec.js](e2e/tests/flow.spec.js))で自動生成したものです)
 
+## iOSアプリ
+
+App Store版(iPhone)は [`app/`](app/README.md) にあります。画面・3D/AR部品・地図データをアプリに同梱し、通信だけ本番Workerへ行います。1台で試せる「デモで試す」付き。
+
 ## 3分で動かす
 
 Googleアカウントも Cloudflareアカウントも不要です。

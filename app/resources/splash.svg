@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2732 2732" width="2732" height="2732">
+  <!-- 起動画面: 背景はアプリの地色 #fff7f0、中央にアイコンと同じ矢印と輪(ブランドのオレンジ) -->
+  <rect width="2732" height="2732" fill="#fff7f0"/>
+  <g transform="translate(1366 1366) scale(0.42) translate(-512 -512)">
+    <circle cx="700" cy="324" r="118" fill="none" stroke="#c8431f" stroke-width="22" opacity="0.55"/>
+    <circle cx="700" cy="324" r="52" fill="#c8431f" opacity="0.8"/>
+    <g transform="translate(384 640) rotate(45)">
+      <path d="M0 -250 L150 150 L0 70 L-150 150 Z" fill="#c8431f" stroke="#c8431f" stroke-width="24" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>

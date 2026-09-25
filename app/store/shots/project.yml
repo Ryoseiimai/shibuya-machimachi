@@ -1,0 +1,34 @@
+# App Storeのスクリーンショット撮影用のUIテスト(XcodeGen)。本体アプリ(渋谷マチマチ)を
+# bundle IDで起動し、デモモードで画面を順にたどってシミュレータの実画面を保存する。
+# 使い方は app/store/shots/run.sh。生成物(Shots.xcodeproj)はコミットしない。
+name: Shots
+options:
+  bundleIdPrefix: jp.co.ryoseiworld.shibuyamachimachi.shots
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  ShotsHost:
+    type: application
+    platform: iOS
+    sources: [Host]
+    info:
+      path: Host/Info.plist
+      properties:
+        UILaunchScreen: {}
+  ShotsUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: ShotsHost
+    settings:
+      base:
+        TEST_TARGET_NAME: ShotsHost
+schemes:
+  Shots:
+    build:
+      targets:
+        ShotsHost: all
+        ShotsUITests: [test]
+    test:
+      targets: [ShotsUITests]

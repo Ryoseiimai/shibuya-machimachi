@@ -1,0 +1,23 @@
+{
+  "appId": "jp.co.ryoseiworld.shibuyamachimachi",
+  "appName": "渋谷マチマチ",
+  "webDir": "www",
+  "ios": {
+    "backgroundColor": "#fff7f0",
+    "contentInset": "never",
+    "preferredContentMode": "mobile",
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 500,
+      "launchAutoHide": true,
+      "backgroundColor": "#fff7f0",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "overlaysWebView": true,
+      "style": "LIGHT"
+    }
+  }
+}

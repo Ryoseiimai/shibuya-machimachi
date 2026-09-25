@@ -67,6 +67,11 @@ sharing instead of a single shared token.
     the Workers Free plan), and a `[[ratelimits]]` binding
     (`ROOM_CREATE_LIMITER`) that caps `POST /api/rooms` per hashed IP.
     **Do not add an `account_id`.**
+- `app/` — the iOS app (Capacitor). `app/scripts/build-www.mjs` bundles the screen from
+  `worker/src/html.js` + `worker/public/` into `app/www/`; `app/src/native-bridge.js` exposes native
+  features to `worker/public/assets/js/app.js` as `window.MachimachiHost` (absent on the web, where
+  app.js behaves exactly as before); `app/src/demo.js` is the on-device demo mode. See `app/README.md`.
+  The Worker allows CORS only for the app origin `capacitor://localhost` (`worker/src/app-origin.js`).
 - `e2e/` — Playwright end-to-end test that drives two isolated browser
   contexts (host + guest) through the full consent flow against a local
   `wrangler dev` server.
