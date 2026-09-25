@@ -43,7 +43,7 @@ final class RealRoomUITests: XCTestCase {
         save("real_03_meet")
         _ = meters
         app.buttons["共有をやめる"].tap()
-        let ok = app.alerts.buttons["OK"]
+        let ok = app.alerts.buttons["やめる"] // 確認は @capacitor/dialog(キャンセル/やめる)
         if ok.waitForExistence(timeout: 5) { ok.tap() }
         sleep(2)
         save("real_04_stopped")

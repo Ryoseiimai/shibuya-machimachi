@@ -13,6 +13,7 @@ App Store版「渋谷マチマチ」(Bundle ID `jp.co.ryoseiworld.shibuyamachima
   - 位置情報: `@capacitor/geolocation`(CoreLocation。使用中のみ)
   - 方位(コンパス): アプリ独自プラグイン `ios/App/App/CompassPlugin.swift`(CoreLocationの方位。許可ボタン不要)
   - 共有シート: `@capacitor/share` / 触覚: `@capacitor/haptics`(「会えた!」のとき)
+  - 確認ダイアログ: `@capacitor/dialog`(「共有をやめる」の確認をボタン「キャンセル/やめる」で出す。WebViewの `confirm()` はボタンが英語固定のため)
   - ディープリンク: `@capacitor/app`。招待リンク `https://…/r/<id>?invite=…` はユニバーサルリンク
     (`/.well-known/apple-app-site-association` は Worker が返す)、独自スキーム `shibuyamachimachi://demo` / `shibuyamachimachi://r/<id>?invite=…`
 - **デモモード**(`src/demo.js`): 作成画面の「デモで試す」で、サーバーの代わりに端末内で相手「すず」の参加・承認・移動を模擬します。
