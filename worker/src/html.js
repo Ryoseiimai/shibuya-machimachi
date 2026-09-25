@@ -310,6 +310,6 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
   <div class="hq-attribution">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）</div>
 </div>
 
-<script src="/assets/js/app.js?v=20260925b" defer></script>
+<script src="/assets/js/app.js?v=20260925c" defer></script>
 </body>
 </html>`;

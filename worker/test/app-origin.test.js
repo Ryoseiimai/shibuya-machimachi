@@ -50,7 +50,7 @@ test("OPTIONS /api/rooms: アプリのオリジンには204とCORSヘッダを�
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), APP_ORIGIN);
   assert.match(res.headers.get("Access-Control-Allow-Methods"), /POST/);
   assert.match(res.headers.get("Access-Control-Allow-Headers"), /Content-Type/i);
-  assert.match(res.headers.get("Vary") || "", /Origin/);
+  assert.equal(res.headers.get("Vary"), "Origin", "Vary: Origin は1回だけ");
 });
 
 test("OPTIONS /api/rooms: 許可外のオリジンには従来どおり404でCORSヘッダを付けない", async () => {

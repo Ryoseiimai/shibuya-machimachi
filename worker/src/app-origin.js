@@ -63,7 +63,8 @@ export function withAppCors(request, response) {
   if (!isAllowedAppOrigin(origin)) return response;
   const headers = new Headers(response.headers);
   headers.set("Access-Control-Allow-Origin", origin);
-  headers.append("Vary", "Origin");
+  // プリフライト応答は既に Vary: Origin を持つので、二重に足さない
+  if (!/(^|,\s*)Origin(\s*,|$)/i.test(headers.get("Vary") || "")) headers.append("Vary", "Origin");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 

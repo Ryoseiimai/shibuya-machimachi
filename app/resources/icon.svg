@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 渋谷マチマチ アプリアイコン(自作)。ブランドのオレンジ #c8431f に、アプリの中心UIである
+       「相手の方角を指す矢印」と「待ち合わせ相手(輪)」を白で置いた。文字・写真・第三者素材は不使用。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9552c"/>
+      <stop offset="1" stop-color="#b8391a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.22" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <!-- 待ち合わせ相手: 右上の輪と点 -->
+  <circle cx="700" cy="324" r="118" fill="none" stroke="#ffe6db" stroke-width="22" opacity="0.9"/>
+  <circle cx="700" cy="324" r="52" fill="#ffe6db"/>
+  <!-- 自分: 相手の方角(右上)を指す矢印 -->
+  <g transform="translate(384 640) rotate(45)">
+    <path d="M0 -250 L150 150 L0 70 L-150 150 Z" fill="#ffffff" stroke="#ffffff" stroke-width="24" stroke-linejoin="round"/>
+  </g>
+</svg>
