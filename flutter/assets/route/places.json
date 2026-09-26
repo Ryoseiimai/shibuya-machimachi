@@ -1,0 +1,21 @@
+{
+  "format": "shibuya-machimachi-places/1",
+  "version": "2026-09-26a",
+  "attribution": "© OpenStreetMap contributors (ODbL)",
+  "note": "座標はOpenStreetMap(ノード・建物の位置)をもとに、歩いて着く場所(入口・広場)に寄せたもの。level はOSMの数え方(0=地上の階)。",
+  "places": [
+    { "id": "hachiko", "name": "ハチ公像", "lat": 35.659060, "lng": 139.700628, "level": 0, "hint": "ハチ公口を出てすぐの広場" },
+    { "id": "hachiko-gate", "name": "ハチ公改札（JR）", "lat": 35.659205, "lng": 139.701125, "level": 0, "hint": "JR渋谷駅・1階の改札" },
+    { "id": "scramble", "name": "スクランブル交差点", "lat": 35.659482, "lng": 139.700572, "level": 0, "hint": "渋谷駅前の大きな交差点" },
+    { "id": "moyai", "name": "モヤイ像", "lat": 35.657292, "lng": 139.699969, "level": 0, "hint": "南西口・フクラスの前" },
+    { "id": "shibuya109", "name": "SHIBUYA109 前", "lat": 35.659520, "lng": 139.698980, "level": 0, "hint": "道玄坂と文化村通りの分かれ目" },
+    { "id": "center-gai", "name": "センター街入口", "lat": 35.659900, "lng": 139.699800, "level": 0, "hint": "スクランブル交差点の北西側" },
+    { "id": "scramble-square", "name": "渋谷スクランブルスクエア", "lat": 35.658453, "lng": 139.702432, "level": 0, "hint": "駅の真上のビル・明治通り側の1階" },
+    { "id": "hikarie", "name": "渋谷ヒカリエ入口", "lat": 35.659346, "lng": 139.703611, "level": 0, "hint": "明治通り側・入口前の広場" },
+    { "id": "miyamasuzaka", "name": "宮益坂口（宮益坂下）", "lat": 35.659560, "lng": 139.702330, "level": 0, "hint": "宮益坂の坂下" },
+    { "id": "markcity", "name": "渋谷マークシティ入口", "lat": 35.658300, "lng": 139.699200, "level": 0, "hint": "駅側・道玄坂の坂下" },
+    { "id": "fukuras", "name": "渋谷フクラス", "lat": 35.657648, "lng": 139.700219, "level": 0, "hint": "南西口・バスのりば側" },
+    { "id": "stream", "name": "渋谷ストリーム", "lat": 35.657349, "lng": 139.703273, "level": 0, "hint": "渋谷川沿い・駅の南側" },
+    { "id": "parco", "name": "渋谷PARCO", "lat": 35.661927, "lng": 139.698749, "level": 0, "hint": "公園通りの坂の途中" }
+  ]
+}
