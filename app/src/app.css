@@ -15,11 +15,6 @@ input, select, textarea {
 /* アプリ内ブラウザ向けの「標準ブラウザで開き直して」案内はアプリでは不要 */
 .in-app-banner { display: none !important; }
 
-/* 「高画質で見る」(PLATEAU LOD2テクスチャ付き3D)はiOSアプリ版では出さない暫定対応。
-   実機(iPhone)でのメモリ確認がまだ取れていないため隠す。Web版はこのCSSを読み込まないため
-   従来どおり表示される。実機で複数回の開閉を確認できたら、1.1でこの1行を消して復活させる。 */
-#hq-open-btn { display: none !important; }
-
 .demo-btn { margin-top: 18px; }
 
 .demo-banner {
