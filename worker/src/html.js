@@ -6,10 +6,18 @@
  *
  * 画面は全て1枚のHTMLに同居させ、`.screen`要素の表示/非表示だけで切り替える
  * (create / preview / full / waiting-guest / waiting-approval-guest / approve / meet /
- *  stopped / expired / error)。ルーティングは location.pathname("/" か "/r/<roomId>") と
- * サーバーから届く phase で決める。
+ *  stopped / expired / error / place-select / place-route)。ルーティングは location.pathname
+ * ("/new" か "/r/<roomId>" か 場所モードの "/go") とサーバーから届く phase で決める。
+ * 道順案内の部品(矢印・案内文・階のボタン)は public/assets/js/route-panel.js が
+ * #place-route-mount / #meet-route-mount の中に組み立てる(見た目のCSSはこのファイル)。
  */
+import { Parser, jaModel } from "budoux";
 import { FLOORS, SHIBUYA_RADIUS_M, MEET_DISTANCE_M, LOCATION_STALE_MS } from "./constants.js";
+
+// 道順案内まわりで追加した日本語の文を、BudouXの文節区切りに<wbr>を入れて返す(lp.jsと同じ方式)。
+// 表示側は .jp-wrap(word-break: keep-all)で、文節の途中では改行しない。プレーンテキスト専用。
+const jaParser = new Parser(jaModel);
+const wbr = (text) => jaParser.parse(text).join("<wbr>");
 
 const FLOOR_OPTIONS = FLOORS.map((f) => `<option value="${f}">${f}</option>`).join("");
 const RADIUS_KM = (SHIBUYA_RADIUS_M / 1000).toFixed(1);
@@ -146,6 +154,51 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
     position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
     text-align: center; font-size: 10.5px; color: rgba(255,255,255,0.75); z-index: 20; pointer-events: none;
   }
+  /* --- 道順案内(route-panel.jsが組み立てる部品。場所モード・人モード共通) --- */
+  .route-card { text-align: center; }
+  .route-head { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .route-head .badge { margin-bottom: 4px; }
+  .route-dest { font-size: 18px; word-break: keep-all; overflow-wrap: anywhere; }
+  .route-dest-floor { font-size: 13px; font-weight: 700; color: var(--muted-text); }
+  .route-arrow-wrap {
+    width: 150px; height: 150px; margin: 10px auto 6px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(200,67,31,0.12), transparent 70%);
+    border: 2px solid rgba(200,67,31,0.35); display: flex; align-items: center; justify-content: center;
+    transition: opacity 0.3s ease;
+  }
+  .route-arrow-wrap.is-idle { opacity: 0.3; }
+  .route-arrow { width: 72px; height: 72px; color: var(--brand-orange); display: block; transition: transform 0.25s ease; }
+  .route-instruction {
+    font-size: 22px; font-weight: 900; line-height: 1.4; margin: 6px 0 2px;
+    word-break: keep-all; overflow-wrap: anywhere;
+  }
+  .route-card.is-floor-change .route-instruction {
+    background: var(--brand-orange-soft-bg); color: var(--brand-orange-on-soft); border-radius: 12px; padding: 8px 10px;
+  }
+  .route-card.is-arrived .route-instruction { background: var(--brand-orange); color: #fff; border-radius: 12px; padding: 10px; }
+  .route-remaining { font-size: 15px; font-weight: 700; color: var(--muted-text); }
+  .route-floor-confirm { margin-top: 10px; }
+  .route-floor-confirm[hidden] { display: none; }
+  .route-floor-label { font-size: 13px; font-weight: 700; color: var(--muted-text); margin: 14px 0 6px; }
+  .floor-chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 8px; -webkit-overflow-scrolling: touch; }
+  .floor-chip {
+    flex: 0 0 auto; width: auto; min-width: 50px; font-size: 15px; font-weight: 800; padding: 9px 10px;
+    border-radius: 999px; background: #efe4da; color: #5b4c42;
+  }
+  .floor-chip.is-active { background: var(--brand-orange); color: #fff; }
+  .route-note { text-align: center; }
+  .route-toggle { margin-top: 10px; }
+  .meet-spot-current { font-size: 16px; font-weight: 800; margin: 0 0 10px; }
+  .phrase { display: inline-block; }
+  .jp-wrap { word-break: keep-all; overflow-wrap: anywhere; }
+  .place-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .place-item {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left;
+    background: #fff; color: #2a2222; border: 2px solid #f0d9cc; padding: 12px 14px; font-size: 16px;
+  }
+  .place-name { font-weight: 800; display: block; }
+  .place-hint { display: block; font-size: 12px; font-weight: 600; color: var(--muted-text); }
+  .place-dist { font-size: 13px; font-weight: 700; color: var(--brand-orange-on-soft); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -168,6 +221,37 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
       <p class="hint">作ると1回だけ使える招待リンクが出ます。相手に送って参加してもらいましょう。</p>
       <p class="hint">アカウント登録は不要です。作った待ち合わせは3時間で自動的に終了します。</p>
     </div>
+    <div class="card jp-wrap">
+      <p style="margin:0 0 10px;font-weight:700;">${wbr("1人で行きたい場所がありますか？")}</p>
+      <button type="button" id="go-place-btn" class="secondary">${wbr("場所へ行く（道順で案内・1人で使えます）")}</button>
+      <p class="hint">${wbr("ハチ公像・モヤイ像などの定番スポットまで、歩ける道に沿った矢印で案内します。上の階や地下への移動も案内します。位置はサーバーに送りません。")}</p>
+    </div>
+  </section>
+
+  <section id="screen-place-select" class="screen">
+    <div class="card jp-wrap">
+      <span class="badge">場所へ行く（1人で使えます）</span>
+      <p style="margin:0 0 12px;">${wbr("行きたい場所を選ぶと、歩ける道に沿った矢印で案内します。エスカレーターや階段での上の階・地下への移動も案内します。")}</p>
+      <ul class="place-list" id="place-list"></ul>
+      <p class="hint" id="place-list-status">場所の一覧を読み込んでいます…</p>
+      <p class="hint">${wbr("位置情報はこの端末の中だけで使い、サーバーには送りません。")}</p>
+    </div>
+    <div class="card jp-wrap">
+      <button type="button" class="restart-btn secondary">${wbr("相手と待ち合わせる（招待リンクを作る）")}</button>
+    </div>
+    <div class="attribution-footer">場所・道順: © OpenStreetMap contributors (ODbL)</div>
+  </section>
+
+  <section id="screen-place-route" class="screen">
+    <div id="place-route-mount"></div>
+    <div class="card" id="place-3d-card">
+      <div class="block-label">3D渋谷（オレンジの線が道順）</div>
+      <div class="map3d" id="place-map3d"></div>
+    </div>
+    <div class="card">
+      <button type="button" id="place-back-btn" class="secondary">ほかの場所を選ぶ</button>
+    </div>
+    <div class="attribution-footer">場所・道順: © OpenStreetMap contributors (ODbL)／建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）／地図: 地理院タイル</div>
   </section>
 
   <section id="screen-preview" class="screen">
@@ -263,6 +347,18 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
       <div class="updated-at" id="meet-updated-at"></div>
       <button id="orientation-permission-btn" class="secondary" style="display:none;margin-top:10px;">向きの許可をON</button>
       <p class="hint" id="orientation-permission-hint" style="display:none;text-align:center;">ONにすると矢印がスマホの向きに合わせて回ります</p>
+      <button type="button" id="route-toggle-btn" class="secondary route-toggle jp-wrap" aria-pressed="false">道順で案内（歩ける道に沿った矢印）</button>
+    </div>
+    <div id="meet-route-mount"></div>
+    <div class="card jp-wrap" id="meet-spot-card">
+      <div class="block-label">待ち合わせ場所を決める</div>
+      <p class="meet-spot-current" id="meet-spot-current">まだ決めていません</p>
+      <select id="meet-spot-select" aria-label="待ち合わせ場所">
+        <option value="">場所を選ぶ</option>
+      </select>
+      <button type="button" id="meet-spot-set-btn" class="secondary">ここで待ち合わせる</button>
+      <button type="button" id="meet-spot-go-btn" style="display:none;margin-top:8px;">待ち合わせ場所へ道順で案内</button>
+      <p class="hint">${wbr("どちらかが決めると2人に届きます。送るのは場所の名前だけです。")}</p>
     </div>
     <div class="card">
       <div id="judge-box">
@@ -293,7 +389,7 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
       <button type="button" id="ar-open-btn" class="secondary" style="margin-top:10px;" disabled>ARで探す(読み込み中…)</button>
       <button type="button" id="hq-open-btn" class="secondary" style="margin-top:8px;">高画質で見る</button>
     </div>
-    <div class="attribution-footer">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）／地図: 地理院タイル／店舗: © OpenStreetMap contributors (ODbL)</div>
+    <div class="attribution-footer">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）／地図: 地理院タイル／店舗・道順: © OpenStreetMap contributors (ODbL)</div>
   </section>
 
 </main>
@@ -310,6 +406,6 @@ export const APP_HTML = String.raw`<!DOCTYPE html>
   <div class="hq-attribution">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC BY 4.0）</div>
 </div>
 
-<script src="/assets/js/app.js?v=20260925d" defer></script>
+<script src="/assets/js/app.js?v=20260927r" defer></script>
 </body>
 </html>`;

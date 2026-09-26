@@ -30,8 +30,8 @@ const CONTACT_EMAIL = "kaeru3160@gmail.com";
 const REPO_URL = "https://github.com/Ryoseiimai/shibuya-machimachi";
 const PUBLISHER_JA = "今井涼晴（個人開発者）";
 const PUBLISHER_EN = "Ryosei Imai (individual developer, Japan)";
-const UPDATED_JA = "2026年9月25日";
-const UPDATED_EN = "September 25, 2026";
+const UPDATED_JA = "2026年9月27日";
+const UPDATED_EN = "September 27, 2026";
 
 const PAGE_STYLE = `
   :root { --brand-orange: #c8431f; --brand-orange-on-soft: #8a2a10; --muted-text: #6b5d53; }
@@ -93,6 +93,7 @@ const PRIVACY_BODY = `
   <li>相手に届くのは<strong>距離・方角・階の差だけ</strong>です。あなたの座標そのものは相手にもほかの誰にも届きません。</li>
   <li>サーバーは待ち合わせ中の最新の位置1点だけを一時的に保持し、<strong>共有をやめた時点で削除</strong>、作成から<strong>${TTL_HOURS}時間で部屋ごと自動削除</strong>します。位置の履歴は残さず、座標をログに書き出すこともありません。</li>
   <li>カメラ映像（AR表示）と端末の向きは端末の中だけで使い、送信も保存もしません。</li>
+  <li>道順案内（「場所へ行く」「道順で案内」）は端末の中だけで計算し、現在地・行き先・経路を送信しません。</li>
   <li>広告、アクセス解析、トラッキングの仕組みは入っていません。情報を販売したり、広告目的で第三者に渡したりすることはありません。</li>
 </ul>
 </div>
@@ -106,15 +107,19 @@ const PRIVACY_BODY = `
 <p>相手の画面には距離・方角・階の差だけが表示されます。相手の画面の3D地図に出る「あなたのおおよその位置」は、相手のアプリが相手自身の位置とサーバーから届いた距離・方角をもとに、相手の端末の中で計算したものです。</p>
 <h3>(3) 今いる階</h3>
 <p>選んだ場合だけ、「相手は2つ上の階にいます」のような階の差の表示に使います。部屋のデータと一緒に削除されます。</p>
-<h3>(4) 「会えた！」の判定</h3>
+<h3>(4) 待ち合わせ場所（選んだ場合だけ）</h3>
+<p>「待ち合わせ場所を決める」でスポットを選ぶと、その場所の名前（ハチ公像などの識別子）だけをサーバーに送り、2人の画面に表示します。座標は送りません。部屋のデータと一緒に削除されます。</p>
+<h3>(5) 「会えた！」の判定</h3>
 <p>「会えた！」を押したとき、判定サービス（TypeSafe AI Jev）に、距離（m）・同じ階かどうか・待ち合わせの経過時間・位置の精度・位置の更新からの秒数・2人ともボタンを押したかどうか、という数値だけを送ります。座標やニックネームは送りません。サービスが使えないときは、距離だけで判定します。</p>
-<h3>(5) 通信に伴う情報</h3>
+<h3>(6) 通信に伴う情報</h3>
 <p>アプリとサーバーの通信は Cloudflare を経由するため、IPアドレスなどの通信情報が Cloudflare で処理されます。待ち合わせの作成回数の制限（いたずら防止）のために、IPアドレスをハッシュ化した値を短時間だけ使います。開発者がIPアドレスを保存・閲覧することはありません。</p>
-<h3>(6) カメラ・端末の向き</h3>
+<h3>(7) カメラ・端末の向き</h3>
 <p>「ARで探す」ではカメラ映像に相手の方向を重ねて表示し、矢印は端末の向き（コンパス）で回転させます。これらは端末の中だけで処理し、映像や向きのデータを送信・保存することはありません。</p>
+<h3>(8) 道順案内</h3>
+<p>「場所へ行く」（1人で定番スポットへ）と、待ち合わせ画面の「道順で案内」の道順は、端末の中だけで計算します。現在地・行き先・経路・選んだ階は送信も保存もしません（待ち合わせ画面で選んだ階は、上の(3)として相手に階の差を表示するためにだけ送ります）。</p>
 
 <h2>2. 地図データの読み込み</h2>
-<p>3D地図を表示するとき、アプリは国土地理院（地理院タイル）から地図画像を、「高画質で見る」ではPLATEAUの配信サーバーから建物データを直接読み込みます。そのとき、これらのサーバーには通常の通信情報（IPアドレスや、表示している範囲の地図の要求）が送られます。お店の情報（OpenStreetMap）と建物の簡易データはアプリに同梱しています。</p>
+<p>3D地図を表示するとき、アプリは国土地理院（地理院タイル）から地図画像を、「高画質で見る」ではPLATEAUの配信サーバーから建物データを直接読み込みます。そのとき、これらのサーバーには通常の通信情報（IPアドレスや、表示している範囲の地図の要求）が送られます。お店の情報（OpenStreetMap）と建物の簡易データはアプリに同梱しています。道順案内の道のデータ（OpenStreetMap）は、このサイトから公開ファイルとして読み込みます。</p>
 
 <h2>3. 第三者への提供</h2>
 <p>法令にもとづく場合を除き、取得した情報を第三者に提供しません。上に書いた Cloudflare（サーバー）と TypeSafe AI Jev（判定。座標やニックネームは送りません）は、アプリの機能を動かすためだけに使います。</p>
@@ -143,6 +148,7 @@ const PRIVACY_BODY = `
   <li>The other person receives <strong>only the distance, direction, and floor difference</strong>. Your raw coordinates are never delivered to them or to anyone else.</li>
   <li>The server temporarily keeps only your latest position during the meetup. It is <strong>deleted as soon as sharing is stopped</strong>, and the whole room is <strong>deleted automatically ${TTL_HOURS} hours</strong> after it is created. No location history is kept, and coordinates are never written to logs.</li>
   <li>The camera image (AR view) and device orientation are processed on your device only and are never sent or stored.</li>
+  <li>Walking directions ("場所へ行く" Go to a place / "道順で案内" Directions) are computed on your device only; your position, destination, and route are never sent.</li>
   <li>There are no ads, no analytics, and no tracking. We do not sell your data or share it with third parties for advertising.</li>
 </ul>
 </div>
@@ -150,11 +156,13 @@ const PRIVACY_BODY = `
 <p><strong>Nickname</strong> — shown to the one person you meet (up to 20 characters; it does not need to be your real name). Deleted with the room after ${TTL_HOURS} hours.</p>
 <p><strong>Precise location</strong> — never sent before mutual approval, and never sent or stored while you are outside the ${RADIUS_KM} km Shibuya area. The server (Cloudflare Workers / Durable Objects) keeps only each person's latest position (latitude, longitude, accuracy, timestamp) to compute distance and direction; each update overwrites the previous one. Tapping "Stop sharing" deletes both positions immediately, and all room data is deleted ${TTL_HOURS} hours after creation. The approximate pin shown on the other person's 3D map is computed on their own device from their own position plus the distance and direction.</p>
 <p><strong>Current floor</strong> — optional; used only to show a floor difference. Deleted with the room.</p>
+<p><strong>Meeting spot</strong> — optional; if either person picks a spot, only the spot's identifier (e.g. Hachiko statue) is sent to the server and shown to both people. No coordinates are sent. Deleted with the room.</p>
 <p><strong>"We met!" judgment</strong> — only numbers (distance in meters, same-floor flag, elapsed time, location accuracy, seconds since the last update, whether both people tapped the button) are sent to the judgment service TypeSafe AI Jev. Coordinates and nicknames are never sent. If the service is unavailable, the app judges by distance only.</p>
 <p><strong>Network information</strong> — traffic goes through Cloudflare, which processes network information such as IP addresses. To prevent abuse, the number of meetups created is rate-limited using a short-lived hashed value of the IP address. The developer does not store or view IP addresses.</p>
 <p><strong>Camera and orientation</strong> — used on-device only for the AR view and the direction arrow; never sent or stored.</p>
+<p><strong>Walking directions</strong> — computed on your device only. Your position, destination, route, and the floor you pick for directions are never sent or stored (in a meetup, the floor you select is sent only to show the floor difference, as described above).</p>
 <h2>2. Map data</h2>
-<p>When the 3D map is shown, the app loads map images directly from the Geospatial Information Authority of Japan (GSI tiles) and, in the high-quality view, building data from the PLATEAU distribution server. These servers receive ordinary network information (such as your IP address and the requested map area). Shop data (OpenStreetMap) and simplified building data are bundled in the app.</p>
+<p>When the 3D map is shown, the app loads map images directly from the Geospatial Information Authority of Japan (GSI tiles) and, in the high-quality view, building data from the PLATEAU distribution server. These servers receive ordinary network information (such as your IP address and the requested map area). Shop data (OpenStreetMap) and simplified building data are bundled in the app. The walkway data for directions (OpenStreetMap) is loaded from this site as a public file.</p>
 <h2>3. Sharing with third parties</h2>
 <p>We do not provide your information to third parties except as required by law. Cloudflare (server) and TypeSafe AI Jev (judgment; no coordinates or nicknames) are used only to run the app's features.</p>
 <h2>4. Who the app is for</h2>

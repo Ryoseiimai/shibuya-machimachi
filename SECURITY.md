@@ -38,6 +38,11 @@
 - `wrangler secret put JEV_API_KEY` で登録するAPIキーをリポジトリ・ログ・画面に出さない。
 - 部屋は3時間で自動終了し、位置データを含め Durable Object のストレージを丸ごと削除します
   (`worker/src/room-do.js` の `alarm()`)。
+- 道順案内(`worker/public/assets/js/route.js` / `route-panel.js`)は**端末の中だけで**経路を計算します。
+  現在地・行き先・経路をサーバーに送る処理(fetch・WebSocketメッセージ)を追加しないでください。
+  読み込むのは公開の道データ(`/route/graph.json`・`/route/places.json`)だけです。
+- 待ち合わせ場所として部屋に保存・配信するのは**スポットのID**だけです(`worker/src/room.js` の
+  `setMeetSpot()`。英小文字・数字・ハイフンのみ受け付け、座標は受け取りません)。
 
 ## English
 
@@ -82,3 +87,9 @@ sharing. The following will **not** be accepted:
 - Never commit or print the `JEV_API_KEY` secret (set via `wrangler secret put JEV_API_KEY`).
 - Rooms auto-expire after 3 hours and the entire Durable Object storage (including any
   location data) is deleted (`alarm()` in `worker/src/room-do.js`).
+- Walking directions (`worker/public/assets/js/route.js` / `route-panel.js`) are computed
+  **on-device only**. Do not add any request (fetch or WebSocket message) that sends the
+  user's position, destination, or route to the server; only the public walkway data
+  (`/route/graph.json`, `/route/places.json`) is downloaded.
+- A shared meeting spot is stored and relayed as **a spot ID only** (`setMeetSpot()` in
+  `worker/src/room.js` accepts lowercase letters/digits/hyphens and never coordinates).

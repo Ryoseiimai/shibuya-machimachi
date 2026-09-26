@@ -36,6 +36,7 @@ export const ERROR_CODES = Object.freeze({
   INVALID_LOCATION: "invalid_location",
   INVALID_FLOOR: "invalid_floor",
   NOT_ACTIVE: "not_active",
+  INVALID_SPOT: "invalid_spot",
 });
 
 export class RoomError extends Error {
@@ -47,6 +48,10 @@ export class RoomError extends Error {
 }
 
 const MAX_NICKNAME_LEN = 20;
+
+// 待ち合わせ場所(定番スポット)のID。worker/public/route/places.json の id と同じ形式。
+// 部屋に保存して2人に配るのはIDだけで、座標は持たない(座標は公開データのplaces.jsonを各端末が引く)。
+const SPOT_ID_PATTERN = /^[a-z0-9-]{1,40}$/;
 
 export function randomToken() {
   return crypto.randomUUID().replace(/-/g, "");
@@ -98,6 +103,7 @@ export function createRoom({ hostNickname, roomId, now = Date.now() }) {
     host: newParticipant(nickname, { approved: false }),
     guest: null,
     stopped: null,
+    meetSpot: null, // { id, by, at } | null。待ち合わせ場所のスポットID(座標ではない)
     judge: {
       callCount: 0,
       found: false,
@@ -176,6 +182,23 @@ export function setFloor(room, { role, secret, floor, now = Date.now() }) {
   if (!isValidFloor(floor)) throw new RoomError(ERROR_CODES.INVALID_FLOOR, "フロアの指定が不正です");
   const next = clone(room);
   next[role].floor = floor;
+  return next;
+}
+
+export function isValidSpotId(spotId) {
+  return typeof spotId === "string" && SPOT_ID_PATTERN.test(spotId);
+}
+
+// 待ち合わせ場所を決める/取り消す(spotId=null)。両者の承認後だけ受け付け、保存するのはスポットIDと
+// 決めた人・時刻だけ(座標は受け取らない・持たない)。どちらが決めても、後から決めた方で上書きする。
+export function setMeetSpot(room, { role, secret, spotId, now = Date.now() }) {
+  if (isExpired(room, now)) throw new RoomError(ERROR_CODES.EXPIRED);
+  if (room.stopped) throw new RoomError(ERROR_CODES.STOPPED);
+  if (!authenticate(room, role, secret)) throw new RoomError(ERROR_CODES.UNAUTHORIZED);
+  if (!isActive(room, now)) throw new RoomError(ERROR_CODES.NOT_ACTIVE);
+  if (spotId !== null && !isValidSpotId(spotId)) throw new RoomError(ERROR_CODES.INVALID_SPOT, "待ち合わせ場所の指定が不正です");
+  const next = clone(room);
+  next.meetSpot = spotId === null ? null : { id: spotId, by: role, at: now };
   return next;
 }
 
@@ -325,6 +348,8 @@ export function buildPublicState(room, viewerRole, now = Date.now()) {
     distance_m,
     bearing_deg,
     floorDiffText,
+    // 待ち合わせ場所はスポットIDだけ(座標は含めない)。byMe=自分が決めたか
+    meetSpot: active && room.meetSpot ? { id: room.meetSpot.id, byMe: room.meetSpot.by === viewerRole } : null,
     stopped: room.stopped,
     judge: {
       found: room.judge.found,
