@@ -34,6 +34,18 @@ open ios/App/App.xcodeproj        # Xcodeで実行。または下のxcodebuild
 
 - アーカイブ→アップロード: `xcodebuild archive … -allowProvisioningUpdates` → `xcodebuild -exportArchive -exportOptionsPlist store/ExportOptionsUpload.plist -allowProvisioningUpdates`
   (配布署名はXcodeにサインイン済みのApple IDのクラウド署名。APIキーだけではクラウド署名の権限が無く失敗した)
+  - 2026-09-26時点、この Mac の Xcode には team X72629Z4T6 の ASC アクセスを持つアカウントがサインインしておらず、
+    自動署名(cloud signing)は `error: exportArchive Failed to Use Accounts` / `Cloud signing permission error` で失敗する。
+    パスワード入力なしの代替手順: (1) ASC APIで配布用プロビジョニングプロファイルを作成
+    (`POST /v1/profiles`, `profileType: IOS_APP_STORE`, 既存の証明書 `Apple Distribution: RYOSEI IMAI` の証明書リソースIDを指定)
+    →`~/Library/MobileDevice/Provisioning Profiles/` に保存、(2) `xcodebuild archive` に
+    `CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution: RYOSEI IMAI (X72629Z4T6)" PROVISIONING_PROFILE_SPECIFIER="<上の profile 名>"` を渡す、
+    (3) `-exportArchive` は `signingStyle: manual` の exportOptionsPlist(`provisioningProfiles` にbundleId→profile名を明記)と
+    `-authenticationKeyPath/-authenticationKeyID/-authenticationKeyIssuerID`(このAPIキー)を渡す。これでアップロードまで成功する。
+  - 開発者側から取り下げた(DEVELOPER_REJECTED)バージョンの再提出は、ビルド添付・`usesIdfa`設定後も
+    `POST /v1/appStoreVersionSubmissions` が `403 CREATE not allowed, allowed: DELETE` で失敗することがある
+    (2026-09-26確認。DELETE側は `409 CANNOT_REJECT_VERSION / Submit for review errors found` で理由の詳細は返らない)。
+    ASCのWeb画面で一度「審査へ提出」を押す必要がある可能性が高い(未解決。ログイン済みセッションが必要)。
 - 掲載情報: `python3 store/asc_metadata.py <App Apple ID>`(`store/metadata.json` の内容。鍵は `~/.appstoreconnect/`、審査連絡先は `~/.appstoreconnect/review_contact.json` から読む。リポジトリには置かない)
 - スクリーンショット: `store/shots/run.sh <シミュレータUDID> <保存先>`(UIテストがデモモードで実画面をたどって撮る)→ `python3 store/asc_screenshots.py <App Apple ID> <png>...`
 - 「アプリのプライバシー」はASC APIに無いため、ASCのWeb画面(またはそのセッションの内部API)で申告する:
@@ -41,6 +53,9 @@ open ios/App/App.xcodeproj        # Xcodeで実行。または下のxcodebuild
 
 ## 既知の限界
 
+- iOS 1.0 は「高画質で見る」(PLATEAU LOD2の高精細3D)を表示しない(`src/app.css` の `#hq-open-btn { display: none }`)。
+  本人のiPhoneでPR #14(高画質3Dの省メモリ化)の実機での複数回開閉確認がまだ取れていないための暫定対応。
+  Web版には残っている。実機で確認できたら1.1でこのCSSを消して復活させる。
 - 意図的な簡略化: 対応は iPhone のみ(縦画面)・日本語のみ。
 - ユニバーサルリンクはアプリのインストール時にAppleがAASAを取得できた場合だけ効く。効かないときは招待リンクはブラウザ版で開く(ブラウザ版でも同じ流れで参加できる)。
 - シミュレータでは方位(コンパス)が取れないため矢印は北基準のまま。実機で確認すること。
