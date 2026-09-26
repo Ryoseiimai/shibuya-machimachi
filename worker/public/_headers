@@ -38,3 +38,18 @@
   Permissions-Policy: geolocation=(self), camera=(self)
   Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cyberjapandata.gsi.go.jp; connect-src 'self' blob: https://cyberjapandata.gsi.go.jp https://assets.cms.plateau.reearth.io; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# 道順案内の道データ(scripts/build_route_graph.mjs が作る graph.json と、定番スポットの places.json)。
+# 中身を変えたら worker/public/assets/js/route.js の ROUTE_GRAPH_VERSION / PLACES_VERSION(=?v=の版の印)を
+# 上げる前提なので1年キャッシュにする(worker/test/route-data.test.js が版の印のズレを検出する)。
+# iOSアプリ(画面はアプリ内の capacitor://localhost)は本番Workerからこのデータを読むため、
+# アプリのオリジンだけにCORSを許可する(公開の地図データのみ。worker/src/app-origin.js と同じオリジン)。
+/route/*
+  Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: capacitor://localhost
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: geolocation=(self), camera=(self)
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cyberjapandata.gsi.go.jp; connect-src 'self' blob: https://cyberjapandata.gsi.go.jp https://assets.cms.plateau.reearth.io; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

@@ -106,6 +106,10 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
     box-shadow: 0 10px 24px rgba(200,67,31,0.28);
   }
   .cta-btn-note { font-size: 13px; font-weight: 700; }
+  .sub-cta {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 15px; font-weight: 800;
+    color: var(--brand-orange-on-soft); text-decoration: underline; text-underline-offset: 3px;
+  }
   .cta-note { font-size: 13px; color: var(--muted-text); margin-top: 12px; }
   .hero-shot {
     border-radius: 22px; border: 1px solid var(--border-soft);
@@ -197,6 +201,7 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
       <p class="sub"><span class="brand">渋谷マチマチ</span> — ${wbr("お互いに承認した2人だけで、渋谷で迷わず会える")}</p>
       <a class="cta-btn" href="/new"><span class="cta-btn-main">待ち合わせを作る</span><span class="cta-btn-note">（無料・登録なし）</span></a>
       <p class="cta-note">${wbr("ニックネームだけで今すぐ使えます。アカウント登録は不要です。")}</p>
+      <a class="sub-cta" href="/go">${wbr("1人で使う：場所へ行く（道順で案内）")}</a>
     </div>
     <div class="shot-col">
       <img class="hero-shot" src="/lp/top-390.png" srcset="/lp/top-240.png 240w, /lp/top-390.png 390w" sizes="(min-width: 780px) 300px, 70vw" width="390" height="844" alt="渋谷マチマチのアプリ画面。相手までの距離155mと方角の矢印が表示されている" loading="lazy">
@@ -230,6 +235,13 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
         <span>
           <p class="feature-title">${wbr("階の差（上とか下とか）")}</p>
           <p class="feature-desc">${wbr("同じ渋谷でも「相手は2つ上の階」までわかる。")}</p>
+        </span>
+      </li>
+      <li class="feature-item">
+        <span class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V14h4V9h4V4h6"/><path d="M16 1l3 3-3 3"/></svg></span>
+        <span>
+          <p class="feature-title">${wbr("道順で案内（上の階・地下も）")}</p>
+          <p class="feature-desc">${wbr("矢印の方向に歩けば着ける。「エスカレーターで2階へ」「階段で地下1階へ」まで案内。ハチ公像などへ1人でも使える。")}</p>
         </span>
       </li>
       <li class="feature-item">
@@ -323,7 +335,7 @@ export const LP_HTML = String.raw`<!DOCTYPE html>
 
 <footer>
   <div class="wrap">
-    <p class="footer-attribution">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC&nbsp;BY&nbsp;4.0）／地図: 地理院タイル／店舗: © OpenStreetMap&nbsp;contributors (ODbL)</p>
+    <p class="footer-attribution">建物: 出典 国土交通省 3D都市モデルPLATEAU（渋谷区, CC&nbsp;BY&nbsp;4.0）／地図: 地理院タイル／店舗・道順: © OpenStreetMap&nbsp;contributors (ODbL)</p>
     <p class="footer-license">コードは MIT License で公開しています。</p>
     <p class="footer-links"><a href="https://github.com/Ryoseiimai/shibuya-machimachi">github.com/Ryoseiimai/shibuya-machimachi</a></p>
     <p class="footer-links"><a href="/privacy">プライバシーポリシー</a>　<a href="/support">サポート</a></p>

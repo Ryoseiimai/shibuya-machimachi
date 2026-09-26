@@ -340,3 +340,24 @@ test("webSocketMessage: locationの連投は1秒以内なら2回目以降が間�
   );
   assert.equal(storage.putCalls, putsAfterSecondCall, "1秒以内の2回目はstorageに触れず間引かれる");
 });
+
+// ---- 道順案内: 待ち合わせ場所(スポットID)の受け渡し ----
+test("webSocketMessage: spot はスポットIDだけを保存して2人に配り、不正なIDはinvalid_spotで拒否する", async () => {
+  const { room, hostSecret } = makeActiveRoomInMeetRange();
+  const storage = makeStorage(room);
+  const sentToGuest = [];
+  const guestSocket = { send: (m) => sentToGuest.push(JSON.parse(m)) };
+  const ctx = { storage, getWebSockets: (tag) => (tag === "role:guest" ? [guestSocket] : []) };
+  const doInstance = new RoomDO(ctx, {});
+  const sentToHost = [];
+  const ws = { deserializeAttachment: () => ({ role: "host", secret: hostSecret }), send: (m) => sentToHost.push(JSON.parse(m)) };
+
+  await doInstance.webSocketMessage(ws, JSON.stringify({ type: "spot", spotId: "moyai" }));
+  assert.deepEqual(storage.data.get(ROOM_KEY).meetSpot.id, "moyai");
+  const guestState = sentToGuest.filter((m) => m.type === "state").pop();
+  assert.deepEqual(guestState.meetSpot, { id: "moyai", byMe: false });
+
+  await doInstance.webSocketMessage(ws, JSON.stringify({ type: "spot", spotId: { lat: 35.65, lng: 139.7 } }));
+  assert.ok(sentToHost.some((m) => m.type === "error" && m.code === "invalid_spot"), "座標らしきものは受け取らない");
+  assert.equal(storage.data.get(ROOM_KEY).meetSpot.id, "moyai", "拒否したら保存も変わらない");
+});

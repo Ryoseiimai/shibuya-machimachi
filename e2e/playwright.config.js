@@ -3,7 +3,9 @@
 // 本番同等の疎通確認は `curl` によるスモークテストで別途行う。
 import { defineConfig } from "@playwright/test";
 
-const PORT = 8799; // ローカル開発(npm run dev, 8787)・他セッションの8788系と衝突しないポート
+// ローカル開発(npm run dev, 8787)・他セッションの8788系と衝突しないポート。
+// 8799も使用中のときは E2E_PORT=8813 のように環境変数で変えられる。
+const PORT = Number(process.env.E2E_PORT) || 8799;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({

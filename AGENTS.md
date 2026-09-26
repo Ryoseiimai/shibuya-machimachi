@@ -53,7 +53,14 @@ sharing instead of a single shared token.
     `room.js`) that decides what's safe to reveal.
   - `public/assets/js/` — client-side JS/ESM served as static assets:
     `app.js` (main screen logic), `shibuya3d.mjs`/`ar.js`/`vr.js`/`geo.js`
-    (3D map, AR, VR, and their shared geo helpers).
+    (3D map, AR, VR, and their shared geo helpers), `route.js` (walking-directions
+    engine: graph decoding, snapping, A*, next waypoint, instruction text — pure
+    functions, unit-tested) and `route-panel.js` (the directions UI shared by the
+    solo "go to a place" mode at `/go` and the meetup screen's "道順で案内").
+  - `public/route/` — walkway graph (`graph.json`, built from OpenStreetMap by
+    `scripts/build_route_graph.mjs`) and well-known spots (`places.json`). Served with a
+    1-year cache; bump `ROUTE_GRAPH_VERSION`/`PLACES_VERSION` in `route.js` when they
+    change (`test/route-data.test.js` fails otherwise).
   - `public/vendor/` — MapLibre GL JS and three.js, vendored verbatim from
     npm (see `package.json` devDependencies and each package's own
     `VERSION.txt`) instead of loaded from a CDN at runtime. Do not hand-edit
@@ -76,6 +83,8 @@ sharing instead of a single shared token.
   contexts (host + guest) through the full consent flow against a local
   `wrangler dev` server.
 - `scripts/dev.sh` — the "3-minute quickstart" dev mode (`npm run dev` / `make dev`).
+- `scripts/build_route_graph.mjs` — builds `worker/public/route/graph.json` from one
+  Overpass API query (`--fetch`) or a saved Overpass result (`--input`).
 
 ## How to run it
 
@@ -138,6 +147,9 @@ location or consent. In short:
    deploy-on-merge automation.
 8. Keep `worker/src/room.js` framework-free and side-effect-free so its
    behavior stays fully unit-testable without Miniflare.
+9. **Never** send the user's position, destination, or route to the server for
+   walking directions — routing stays on-device (`route.js`). A shared meeting
+   spot is a spot ID only (`setMeetSpot()`), never coordinates.
 
 ## Style
 

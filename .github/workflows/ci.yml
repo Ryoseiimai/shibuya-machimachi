@@ -40,7 +40,10 @@ jobs:
           node --check public/assets/js/geo.js
           node --check public/assets/js/shibuya3d.mjs
           node --check public/assets/js/shibuya3d-hq.mjs
-      - name: Unit tests (room state machine / geo / floors / jev)
+          node --check public/assets/js/route.js
+          node --check public/assets/js/route-panel.js
+          node --check ../scripts/build_route_graph.mjs
+      - name: Unit tests (room state machine / geo / floors / jev / walking directions)
         run: npm test
       - name: iOS app shell (app/ - bundled index.html builder, native bridge, demo mode)
         run: |

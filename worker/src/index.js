@@ -7,7 +7,8 @@
  *   POST /api/rooms/:roomId/join             招待トークンで参加する
  *   GET  /api/rooms/:roomId/ws?role=&secret= WebSocket接続(以降のやり取りは全てこれ経由)
  *   GET  /                                    紹介LP(トップページ。作成画面ではない)
- *   GET  /new , GET /r/:roomId                スマホ用HTML画面(作成/参加。1枚をパスに関わらず配信)
+ *   GET  /new , GET /r/:roomId , GET /go      スマホ用HTML画面(作成/参加/場所モード。1枚をパスに関わらず配信)
+ *   GET  /route/graph.json , /route/places.json  道順案内の道データ(静的アセット。このfetchは通らない)
  *   GET  /privacy , GET /support             プライバシーポリシー・サポート(App Store掲載用)
  *   GET  /.well-known/apple-app-site-association  iOSアプリのユニバーサルリンク設定(招待リンク)
  *   OPTIONS /api/*                           iOSアプリ(capacitor://localhost)からのCORSプリフライト
@@ -119,7 +120,8 @@ async function route(request, env) {
     return forwardToRoom(env, roomId, action, request);
   }
 
-  if (request.method === "GET" && (url.pathname === "/new" || ROOM_PAGE_RE.test(url.pathname))) {
+  // /go は「場所へ行く」(1人で定番スポットへ道順案内)。位置はサーバーに送らず、画面内だけで計算する。
+  if (request.method === "GET" && (url.pathname === "/new" || url.pathname === "/go" || ROOM_PAGE_RE.test(url.pathname))) {
     return html(APP_HTML);
   }
 

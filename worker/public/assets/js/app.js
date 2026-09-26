@@ -12,6 +12,7 @@
   var SCREENS = [
     "loading", "create", "preview", "full", "error", "expired",
     "waiting-guest", "approve", "waiting-approval-guest", "stopped", "meet",
+    "place-select", "place-route",
   ];
   // 通信切れ再接続の指数バックオフ設定(1s, 2s, 4s, ... 上限15s)。
   var RECONNECT_BASE_MS = 1000;
@@ -66,13 +67,29 @@
   var ASSETS_JS_BASE = "/assets/js/";
 // 意図的な簡略化: /assets/* は以前 immutable(1年)で配信していたため、中身を変えたら版の印を上げて
 // 古いキャッシュを持つ端末にも新しい版を読ませる(本格対応はファイル名へのハッシュ付与)。
-var ASSET_VERSION_QUERY = "?v=20260925d";
+var ASSET_VERSION_QUERY = "?v=20260927r";
   var selfPos = null;
   var extrasState = {
     shibuya3dModPromise: null, shibuya3dPromise: null, shibuya3d: null, nearestShops: null,
     arPromise: null, ar: null, focused: false, vrChecked: false,
     hqPromise: null, hq: null, lastMe: null, lastPartner: null,
   };
+
+  // --- 道順案内(場所モード /go・待ち合わせ画面の「道順で案内」。route-panel.js / route.js) ---
+  // 経路計算はすべてこの端末の中で行い、自分の位置・行き先・経路はネットワークに送らない
+  // (読み込むのは公開の道データ /route/graph.json と /route/places.json だけ)。
+  var routeState = {
+    modsPromise: null,
+    places: null, placeLevel: 0, geoWatching: false,
+    placePanel: null, placePanelPromise: null, placeMapPromise: null, selectedPlace: null, fittedPlaceId: null,
+    meetPanel: null, meetPanelPromise: null, meetOn: false, meetFitted: false,
+    meetLevelOverride: null, meetLevelOverrideAt: 0,
+    meetTarget: "partner", // "partner"=相手の近似位置へ / "spot"=決めた待ち合わせ場所へ
+    spotListRequested: false,
+  };
+  // 人モードで階のボタンを押してから、サーバーの状態(自分の階)に反映されるまでの猶予。
+  // この間は古い状態で階を戻さない(ボタンが一瞬戻ってちらつくのを防ぐ)。
+  var ROUTE_LEVEL_OVERRIDE_MS = 5000;
 
   // worker/src/floors.js の floorLabelToInt と同じロジック(クライアントはサーバー側の
   // モジュールをimportできないため、ここに複製している)。"B5"→-5, "1F"→1, "10F"→10。
@@ -81,6 +98,17 @@ var ASSET_VERSION_QUERY = "?v=20260925d";
     if (label.charAt(0) === "B") return -parseInt(label.slice(1), 10);
     var n = parseInt(label, 10);
     return isNaN(n) ? null : n;
+  }
+
+  // 画面の階の整数(1=1F, -1=B1。3D渋谷のsetMe/setPartnerの形式) ⇔ 道のデータの階(OSM: 0=1階, -1=地下1階)
+  function appFloorIntToLevel(f) {
+    if (f == null) return null;
+    return f >= 1 ? f - 1 : f;
+  }
+  function levelToAppFloorInt(level) {
+    if (level == null) return 1;
+    var l = Math.round(level);
+    return l >= 0 ? l + 1 : l;
   }
 
   function storageKey(roomId, field) { return "sm:" + roomId + ":" + field; }
@@ -258,6 +286,7 @@ var ASSET_VERSION_QUERY = "?v=20260925d";
     }
 
     document.getElementById("floor-diff-text").textContent = state.floorDiffText || "";
+    renderMeetSpot(state);
 
     var judgeStatus = document.getElementById("judge-status");
     var judgeNote = document.getElementById("judge-note");
@@ -393,6 +422,7 @@ var ASSET_VERSION_QUERY = "?v=20260925d";
       if (extrasState.ar) extrasState.ar.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
       if (extrasState.hq) extrasState.hq.setPartner(p.lat, p.lng, partnerFloorInt, partnerName);
       updateShopsList(p.lat, p.lng);
+      refreshMeetRoute();
     });
   }
 
@@ -529,37 +559,60 @@ var ASSET_VERSION_QUERY = "?v=20260925d";
     });
   }
 
+  // 端末の向き(方位)。待ち合わせの矢印と、道順案内の矢印(場所モード・人モード)の両方に配る。
+  var orientationListening = false;
+  var hostHeadingStarted = false;
+  function setHeading(h) {
+    heading = h;
+    if (lastState && lastState.bearing_deg != null) applyArrowRotation(lastState.bearing_deg);
+    if (routeState.placePanel) routeState.placePanel.setHeading(h);
+    if (routeState.meetPanel) routeState.meetPanel.setHeading(h);
+  }
+  function onOrientation(e) {
+    var h = null;
+    if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
+    else if (e.alpha != null) h = 360 - e.alpha;
+    if (h != null) setHeading(h);
+  }
+  function listenOrientation() {
+    if (orientationListening) return;
+    orientationListening = true;
+    window.addEventListener("deviceorientation", onOrientation);
+  }
+  function needsOrientationPermission() {
+    return typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function";
+  }
+  // iOS Safariの向きセンサー許可。ユーザー操作(タップ)のハンドラの中から直接呼ぶこと。
+  function requestOrientationPermission() {
+    return DeviceOrientationEvent.requestPermission().then(function (res) {
+      if (res === "granted") listenOrientation();
+      return res === "granted";
+    }).catch(function () { return false; });
+  }
+  // アプリ版は端末のコンパス(CoreLocationの方位)を直接使う。使えたら許可ボタンは出さない。
+  function startHostHeading() {
+    if (hostHeadingStarted) return true;
+    if (host && host.watchHeading && host.watchHeading(setHeading)) { hostHeadingStarted = true; return true; }
+    return false;
+  }
+
   function startOrientation() {
-    // アプリ版は端末のコンパス(CoreLocationの方位)を直接使う。使えたら許可ボタンは出さない。
-    if (host && host.watchHeading && host.watchHeading(function (h) {
-      heading = h;
-      if (lastState && lastState.bearing_deg != null) applyArrowRotation(lastState.bearing_deg);
-    })) return;
-    function onOrientation(e) {
-      var h = null;
-      if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
-      else if (e.alpha != null) h = 360 - e.alpha;
-      if (h != null) {
-        heading = h;
-        if (lastState && lastState.bearing_deg != null) applyArrowRotation(lastState.bearing_deg);
-      }
-    }
+    if (startHostHeading()) return;
     var hint = document.getElementById("orientation-permission-hint");
-    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+    if (needsOrientationPermission()) {
+      if (orientationListening) return;
       var btn = document.getElementById("orientation-permission-btn");
       btn.style.display = "inline-block";
       if (hint) hint.style.display = "block";
       btn.onclick = function () {
-        DeviceOrientationEvent.requestPermission().then(function (res) {
-          if (res === "granted") {
-            window.addEventListener("deviceorientation", onOrientation);
-            btn.style.display = "none";
-            if (hint) hint.style.display = "none";
-          }
-        }).catch(function () {});
+        requestOrientationPermission().then(function (ok) {
+          if (!ok) return;
+          btn.style.display = "none";
+          if (hint) hint.style.display = "none";
+        });
       };
     } else if (typeof DeviceOrientationEvent !== "undefined") {
-      window.addEventListener("deviceorientation", onOrientation);
+      listenOrientation();
     }
   }
 
@@ -705,7 +758,344 @@ var ASSET_VERSION_QUERY = "?v=20260925d";
     };
     document.getElementById("floor-select").onchange = function (e) {
       if (e.target.value) sendWs({ type: "floor", floor: e.target.value });
+      if (routeState.meetPanel && e.target.value) routeState.meetPanel.setLevel(appFloorIntToLevel(floorLabelToInt(e.target.value)));
     };
+    document.getElementById("route-toggle-btn").onclick = function () {
+      if (!routeState.meetOn) routeState.meetTarget = "partner";
+      setMeetRoute(!routeState.meetOn);
+    };
+    // 待ち合わせ場所: サーバーに送るのはスポットIDだけ(座標は送らない)
+    document.getElementById("meet-spot-set-btn").onclick = function () {
+      var id = document.getElementById("meet-spot-select").value;
+      if (id) sendWs({ type: "spot", spotId: id });
+    };
+    document.getElementById("meet-spot-go-btn").onclick = function () {
+      routeState.meetTarget = "spot";
+      setMeetRoute(true);
+      refreshMeetRoute();
+    };
+  }
+
+  // 文節の途中で改行しないよう、かたまりごとに inline-block の span にする(route-panel.js と同じ方式)
+  function setPhraseSpans(node, phrases) {
+    node.textContent = "";
+    phrases.forEach(function (text) {
+      var span = document.createElement("span");
+      span.className = "phrase";
+      span.textContent = text;
+      node.appendChild(span);
+    });
+  }
+
+  function findPlace(id) {
+    if (!routeState.places || !id) return null;
+    return routeState.places.filter(function (p) { return p.id === id; })[0] || null;
+  }
+
+  // 待ち合わせ場所の一覧(公開データ /route/places.json)を読み込んで選択肢にする。1回だけ。
+  function ensureSpotList() {
+    if (routeState.spotListRequested) return;
+    routeState.spotListRequested = true;
+    loadRouteMods().then(function (mods) {
+      return mods.route.loadPlaces(API_BASE, routeDataFetch);
+    }).then(function (places) {
+      routeState.places = places;
+      var select = document.getElementById("meet-spot-select");
+      places.forEach(function (p) {
+        var opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        select.appendChild(opt);
+      });
+      if (lastState) renderMeetSpot(lastState);
+    }).catch(function (err) {
+      console.error(err);
+      document.getElementById("meet-spot-card").style.display = "none";
+    });
+  }
+
+  function renderMeetSpot(state) {
+    ensureSpotList();
+    var spot = state.meetSpot;
+    var place = spot ? findPlace(spot.id) : null;
+    var current = document.getElementById("meet-spot-current");
+    var goBtn = document.getElementById("meet-spot-go-btn");
+    if (spot && place) {
+      setPhraseSpans(current, ["待ち合わせ場所：", place.name, spot.byMe ? "(あなたが決めました)" : "(相手が決めました)"]);
+      goBtn.style.display = "block";
+    } else {
+      setPhraseSpans(current, [spot ? "待ち合わせ場所を読み込んでいます…" : "まだ決めていません"]);
+      goBtn.style.display = "none";
+      if (!spot && routeState.meetTarget === "spot") routeState.meetTarget = "partner";
+    }
+    if (routeState.meetOn) refreshMeetRoute();
+  }
+
+  // ---------- 道順案内(共通) ----------
+
+  function loadRouteMods() {
+    if (!routeState.modsPromise) {
+      routeState.modsPromise = Promise.all([
+        import(ASSETS_JS_BASE + "route-panel.js" + ASSET_VERSION_QUERY),
+        import(ASSETS_JS_BASE + "route.js" + ASSET_VERSION_QUERY),
+      ]).then(function (mods) { return { panel: mods[0], route: mods[1] }; });
+    }
+    return routeState.modsPromise;
+  }
+
+  // 道のデータ(公開の静的ファイル)の取得。アプリ版は画面をアプリ内から読むため、データは本番Worker
+  // (API_BASE)から取る(/route/* はアプリのオリジンからのCORSを許可済み。worker/public/_headers)。
+  function routeDataFetch(url) {
+    return fetch(url);
+  }
+
+  // 3D渋谷に道順の線を引く(地図がまだ無い/道順が無いときは線を消す)。fit=trueなら経路全体が入るよう寄せる。
+  function drawRouteOn(mapPromise, route, fit) {
+    if (!mapPromise) return;
+    Promise.all([mapPromise, loadRouteMods()]).then(function (res) {
+      var api = res[0];
+      if (api && api.setRoute) api.setRoute(route ? res[1].route.routeLineCoordinates(route) : null, { fit: !!(fit && route) });
+    }).catch(function (err) { console.error(err); });
+  }
+
+  // 場所モード: 行き先を選んだ直後の最初の道順だけ、3D渋谷を経路全体が入る位置に寄せる(以後は手動操作を尊重)
+  function drawPlaceRoute(route) {
+    var place = routeState.selectedPlace;
+    var fit = !!(route && place && routeState.fittedPlaceId !== place.id && routeState.placeMapPromise);
+    if (fit) routeState.fittedPlaceId = place.id;
+    drawRouteOn(routeState.placeMapPromise, route, fit);
+  }
+
+  function onRouteArrive() {
+    if (host && host.haptic) host.haptic("success");
+  }
+
+  // ---------- 場所モード(/go): 1人で定番スポットへ ----------
+
+  function initPlaceMode() {
+    showOnly("place-select");
+    startPlaceGeolocation();
+    if (!startHostHeading() && !needsOrientationPermission() && typeof DeviceOrientationEvent !== "undefined") listenOrientation();
+    document.getElementById("place-back-btn").onclick = function () {
+      showOnly("place-select");
+      window.scrollTo(0, 0);
+    };
+    loadRouteMods().then(function (mods) {
+      return mods.route.loadPlaces(API_BASE, routeDataFetch);
+    }).then(function (places) {
+      routeState.places = places;
+      renderPlaceList();
+    }).catch(function (err) {
+      console.error(err);
+      document.getElementById("place-list-status").textContent = "場所の一覧を読み込めませんでした。通信を確かめて開き直してください。";
+    });
+  }
+
+  function renderPlaceList() {
+    var list = document.getElementById("place-list");
+    list.innerHTML = "";
+    routeState.places.forEach(function (p) {
+      var li = document.createElement("li");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "place-item";
+      btn.setAttribute("data-place-id", p.id);
+      var left = document.createElement("span");
+      var name = document.createElement("span");
+      name.className = "place-name";
+      name.textContent = p.name;
+      var hint = document.createElement("span");
+      hint.className = "place-hint";
+      hint.textContent = p.hint;
+      left.appendChild(name);
+      left.appendChild(hint);
+      var dist = document.createElement("span");
+      dist.className = "place-dist";
+      btn.appendChild(left);
+      btn.appendChild(dist);
+      btn.onclick = function () { selectPlace(p); };
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+    var status = document.getElementById("place-list-status");
+    if (status.textContent.indexOf("位置情報") === -1) status.textContent = "";
+    renderPlaceDistances();
+  }
+
+  // 一覧の右側に、今いる所からの直線距離を出す(端末の中だけの計算)
+  function renderPlaceDistances() {
+    if (!routeState.places || !selfPos) return;
+    loadRouteMods().then(function (mods) {
+      var buttons = document.querySelectorAll("#place-list .place-item");
+      for (var i = 0; i < buttons.length; i++) {
+        var id = buttons[i].getAttribute("data-place-id");
+        var p = routeState.places.filter(function (x) { return x.id === id; })[0];
+        if (!p) continue;
+        var d = mods.route.distanceMeters(selfPos.lat, selfPos.lng, p.lat, p.lng);
+        buttons[i].querySelector(".place-dist").textContent = "直線" + mods.route.formatDistance(d);
+      }
+    });
+  }
+
+  function selectPlace(place) {
+    // iOS Safariの向きセンサー許可は、このタップ(ユーザー操作)の中で直接求める
+    if (!hostHeadingStarted && needsOrientationPermission() && !orientationListening) requestOrientationPermission();
+    routeState.selectedPlace = place;
+    showOnly("place-route");
+    window.scrollTo(0, 0);
+    ensurePlacePanel().then(function (panel) {
+      panel.setLevel(routeState.placeLevel);
+      panel.setHeading(heading);
+      if (selfPos) panel.setSelf(selfPos.lat, selfPos.lng);
+      panel.setTarget({ lat: place.lat, lng: place.lng, level: place.level, name: place.name });
+    }).catch(function (err) { console.error(err); });
+    ensurePlaceMap().then(function (api) {
+      api.setPartner(place.lat, place.lng, levelToAppFloorInt(place.level), place.name);
+      updatePlaceMapMe();
+      api.focusBoth();
+      if (routeState.placePanel) drawPlaceRoute(routeState.placePanel.getRoute());
+    }).catch(function (err) { console.error(err); });
+  }
+
+  function ensurePlacePanel() {
+    if (!routeState.placePanelPromise) {
+      routeState.placePanelPromise = loadRouteMods().then(function (mods) {
+        var panel = mods.panel.mountRoutePanel(document.getElementById("place-route-mount"), {
+          dataBaseUrl: API_BASE,
+          fetch: routeDataFetch,
+          note: ["位置情報は", "この端末の中だけで使い、", "サーバーには", "送りません。"],
+          onLevelChange: function (level) {
+            routeState.placeLevel = level;
+            updatePlaceMapMe();
+          },
+          onRoute: drawPlaceRoute,
+          onArrive: onRouteArrive,
+        });
+        routeState.placePanel = panel;
+        return panel;
+      });
+    }
+    return routeState.placePanelPromise;
+  }
+
+  function ensurePlaceMap() {
+    if (!routeState.placeMapPromise) {
+      routeState.placeMapPromise = ensureShibuya3dMod().then(function (mod) {
+        return mod.mountShibuya3D(document.getElementById("place-map3d"), {});
+      });
+    }
+    return routeState.placeMapPromise;
+  }
+
+  function updatePlaceMapMe() {
+    if (!routeState.placeMapPromise || !selfPos) return;
+    var pos = selfPos;
+    routeState.placeMapPromise.then(function (api) {
+      api.setMe(pos.lat, pos.lng, levelToAppFloorInt(routeState.placeLevel));
+    }).catch(function () {});
+  }
+
+  // 場所モードの位置取得。ここで得た位置はこの端末の中だけで使う(WebSocket・fetchで送らない)。
+  function startPlaceGeolocation() {
+    if (routeState.geoWatching) return;
+    var geo = (host && host.geolocation) || navigator.geolocation;
+    if (!geo) {
+      document.getElementById("place-list-status").textContent = "この端末では位置情報が使えません。";
+      return;
+    }
+    routeState.geoWatching = true;
+    geo.watchPosition(
+      function (pos) {
+        selfPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        if (routeState.placePanel) routeState.placePanel.setSelf(selfPos.lat, selfPos.lng);
+        updatePlaceMapMe();
+        renderPlaceDistances();
+      },
+      function (err) {
+        if (err && err.code === 1) {
+          document.getElementById("place-list-status").textContent = "位置情報がオフになっています。許可すると道順を案内できます。";
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+  }
+
+  // ---------- 人モード: 待ち合わせ画面の「道順で案内」 ----------
+
+  function setMeetRoute(on) {
+    routeState.meetOn = on;
+    var btn = document.getElementById("route-toggle-btn");
+    var mount = document.getElementById("meet-route-mount");
+    btn.textContent = on ? "まっすぐの矢印に戻す" : "道順で案内（歩ける道に沿った矢印）";
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    mount.hidden = !on;
+    // 道順の矢印を出している間は、直線の矢印は隠す(矢印が2つあると迷うため。距離の数字は残す)
+    document.getElementById("arrow-wrap").style.display = on ? "none" : "";
+    if (!on) {
+      drawRouteOn(extrasState.shibuya3dPromise, null);
+      return;
+    }
+    routeState.meetFitted = false;
+    ensureMeetPanel().then(function () {
+      refreshMeetRoute();
+      if (routeState.meetPanel.getRoute()) drawMeetRoute(routeState.meetPanel.getRoute());
+    }).catch(function (err) { console.error(err); });
+  }
+
+  // 人モード: 「道順で案内」を押した直後の最初の道順だけ、3D渋谷を経路全体が入る位置に寄せる
+  function drawMeetRoute(route) {
+    if (!routeState.meetOn) return;
+    var fit = !!(route && !routeState.meetFitted);
+    if (fit) routeState.meetFitted = true;
+    drawRouteOn(extrasState.shibuya3dPromise, route, fit);
+  }
+
+  function ensureMeetPanel() {
+    if (!routeState.meetPanelPromise) {
+      routeState.meetPanelPromise = loadRouteMods().then(function (mods) {
+        var panel = mods.panel.mountRoutePanel(document.getElementById("meet-route-mount"), {
+          dataBaseUrl: API_BASE,
+          fetch: routeDataFetch,
+          emptyText: "相手の位置を待っています…",
+          note: ["道順は", "この端末の中で", "計算します。", "相手の位置は、", "届いた距離と方角からの", "推定です。"],
+          onLevelChange: function (level, label) {
+            routeState.meetLevelOverride = level;
+            routeState.meetLevelOverrideAt = Date.now();
+            document.getElementById("floor-select").value = label;
+            sendWs({ type: "floor", floor: label });
+          },
+          onRoute: drawMeetRoute,
+          onArrive: onRouteArrive,
+        });
+        panel.setHeading(heading);
+        routeState.meetPanel = panel;
+        return panel;
+      });
+    }
+    return routeState.meetPanelPromise;
+  }
+
+  // 相手の推定位置(refreshExtrasで、自分のGPS+サーバーの距離・方角から画面内だけで復元したもの)と
+  // 相手の階へ、道順を出す。新しい情報はサーバーに一切送らない。
+  function refreshMeetRoute() {
+    var panel = routeState.meetPanel;
+    if (!routeState.meetOn || !panel || !lastState) return;
+    var ownLevel = appFloorIntToLevel(floorLabelToInt(lastState.self && lastState.self.floor));
+    var override = routeState.meetLevelOverride;
+    if (override != null && (ownLevel === override || Date.now() - routeState.meetLevelOverrideAt > ROUTE_LEVEL_OVERRIDE_MS)) {
+      routeState.meetLevelOverride = null;
+    }
+    if (routeState.meetLevelOverride == null) panel.setLevel(ownLevel == null ? 0 : ownLevel);
+    if (selfPos) panel.setSelf(selfPos.lat, selfPos.lng);
+    var spotPlace = routeState.meetTarget === "spot" && lastState.meetSpot ? findPlace(lastState.meetSpot.id) : null;
+    if (spotPlace) {
+      panel.setTarget({ lat: spotPlace.lat, lng: spotPlace.lng, level: spotPlace.level, name: spotPlace.name });
+      return;
+    }
+    var partner = extrasState.lastPartner;
+    if (!partner) return;
+    var partnerLevel = appFloorIntToLevel(floorLabelToInt(lastState.other && lastState.other.floor));
+    panel.setTarget({ lat: partner.lat, lng: partner.lng, level: partnerLevel, name: partner.name });
   }
 
   // 行き止まり画面(満員/エラー/期限切れ/停止済み)の「新しく待ち合わせを作る」ボタン。
@@ -740,9 +1130,11 @@ var ASSET_VERSION_QUERY = "?v=20260925d";
     // WSが止まっていても「最終更新から何秒経ったか」の表示(通信切れバナー・古い位置の薄表示)を
     // 進めるための定期再評価。renderMeet()を経由しない軽量な関数なので、頻度が高くても負荷は小さい。
     setInterval(updateStatusBanner, STATUS_BANNER_POLL_MS);
+    document.getElementById("go-place-btn").onclick = function () { location.href = "/go"; };
     var m = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
     if (m) { initRoomScreen(m[1]); return; }
     if (location.pathname === "/new") { initCreateScreen(); return; }
+    if (location.pathname === "/go") { initPlaceMode(); return; }
     showError("ページが見つかりません");
   }
 

@@ -14,6 +14,7 @@ import {
   approveHost,
   authenticate,
   setFloor,
+  setMeetSpot,
   updateLocation,
   stopSharing,
   canAttemptJudge,
@@ -247,6 +248,12 @@ export class RoomDO {
         await this.saveRoom(result.room);
         if (!result.accepted) this.sendJson(ws, { type: "locationRejected", reason: result.reason });
         this.broadcast(result.room);
+      } else if (payload.type === "spot") {
+        // 待ち合わせ場所: 受け取るのはスポットID(またはnull=取り消し)だけ。座標は受け取らない。
+        const spotId = payload.spotId === null || payload.spotId === undefined ? null : payload.spotId;
+        const next = setMeetSpot(room, { role, secret, spotId });
+        await this.saveRoom(next);
+        this.broadcast(next);
       } else if (payload.type === "stop") {
         const next = stopSharing(room, { role, secret });
         await this.saveRoom(next);

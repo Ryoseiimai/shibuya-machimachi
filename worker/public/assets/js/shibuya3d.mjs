@@ -10,7 +10,10 @@
 // module's own URL, so the component works regardless of which page imports it.
 //
 // Public API:
-//   mountShibuya3D(el, { onReady }) -> Promise<{ setMe, setPartner, focusBoth, destroy }>
+//   mountShibuya3D(el, { onReady }) -> Promise<{ setMe, setPartner, focusBoth, setRoute, destroy }>
+//   setRoute([[lng, lat], ...] | null, { fit }): 道順案内(route.js)の経路を地面に太い線で描く/消す。
+//     線を出している間は、2人を直線で結ぶ点線(pins-line)は隠す(線が2本あると迷うため)。
+//     fit=true なら経路全体が収まるようにカメラを寄せる(行き先を選んだ直後の1回だけ使う想定)。
 //   nearestShops(lat, lng, n) -> Promise<Array<{ name, distanceM, level }>>
 //
 // NOTE (intentional simplification): building footprints use the flattest ring
@@ -107,6 +110,8 @@ const LABEL_CARD_HORIZONTAL_PADDING_PX = 9 * 2; // buildLabelElの `padding: 4px
 // 近接時、2つのラベルが画面上で重なりそうならどちらかを縦にずらして両方読めるようにする。
 const LABEL_STACK_DISTANCE_PX = 56; // これより画面上の距離が近ければ「重なりそう」とみなす
 const LABEL_STACK_OFFSET_PX = 34; // ずらす量(ラベルの高さ+隙間の概算)
+
+const ROUTE_LINE_WIDTH_PX = 5; // 道順の線の太さ
 
 const ME_COLOR = "#1e88e5";
 const ME_BASEMENT_COLOR = "#37474f";
@@ -263,6 +268,10 @@ function buildStyle() {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       },
+      "route-line": {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      },
     },
     layers: [
       { id: "bg", type: "background", paint: { "background-color": "#eef1f3" } },
@@ -330,6 +339,21 @@ function buildStyle() {
           "line-dasharray": [1.4, 1.6],
           "line-opacity": 0.85,
         },
+      },
+      // 道順案内の経路(地表面の太い線。白い縁取りの上にアクセント色)
+      {
+        id: "route-line-casing",
+        type: "line",
+        source: "route-line",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#ffffff", "line-width": ROUTE_LINE_WIDTH_PX + 3, "line-opacity": 0.9 },
+      },
+      {
+        id: "route-line",
+        type: "line",
+        source: "route-line",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ACCENT_COLOR, "line-width": ROUTE_LINE_WIDTH_PX, "line-opacity": 0.95 },
       },
       {
         id: "pins-3d",
@@ -635,6 +659,37 @@ export async function mountShibuya3D(el, opts = {}) {
     });
   }
 
+  function setRoute(coords, { fit = false } = {}) {
+    const src = map.getSource("route-line");
+    const has = Array.isArray(coords) && coords.length >= 2;
+    if (src) {
+      src.setData({
+        type: "FeatureCollection",
+        features: has ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] : [],
+      });
+    }
+    if (map.getLayer("pins-line")) map.setLayoutProperty("pins-line", "visibility", has ? "none" : "visible");
+    if (!has || !fit) return;
+    let west = coords[0][0], east = coords[0][0], south = coords[0][1], north = coords[0][1];
+    for (const [lng, lat] of coords) {
+      west = Math.min(west, lng);
+      east = Math.max(east, lng);
+      south = Math.min(south, lat);
+      north = Math.max(north, lat);
+    }
+    // パディングはfocusBothと同じ考え方(コンテナの実サイズの比率+ラベル分の余白を、幅の半分未満に収める)
+    const rect = container.getBoundingClientRect();
+    const vPad = safeSidePadding(clampPx(rect.height * FOCUS_PADDING_RATIO, FOCUS_LABEL_PADDING_MAX_PX), rect.height);
+    const hPad = safeSidePadding(clampPx(rect.width * FOCUS_PADDING_RATIO, FOCUS_LABEL_PADDING_MAX_PX), rect.width);
+    map.fitBounds([[west, south], [east, north]], {
+      padding: { top: vPad + LABEL_STACK_OFFSET_PX, bottom: vPad, left: hPad, right: hPad },
+      pitch: DEFAULT_PITCH_DEG,
+      bearing: map.getBearing(),
+      maxZoom: 17.5,
+      duration: 800,
+    });
+  }
+
   function destroy() {
     stopIntro();
     map.off("render", updateMarkerOffsets);
@@ -652,6 +707,7 @@ export async function mountShibuya3D(el, opts = {}) {
     setMe: (lat, lng, floor) => upsertPin("me", lat, lng, floor, "自分"),
     setPartner: (lat, lng, floor, name) => upsertPin("partner", lat, lng, floor, name || "相手"),
     focusBoth,
+    setRoute,
     destroy,
   };
 }
