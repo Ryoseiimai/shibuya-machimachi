@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 起動画面の中央マーク。地の色 #fff7f0 は OS 側（LaunchScreen / launch_background）で塗る。 -->
+  <defs><clipPath id="ring"><circle cx="690" cy="334" r="138"/></clipPath></defs>
+    <g transform="translate(712 312) scale(0.88) translate(-690 -334)">
+  <circle cx="690" cy="334" r="138" fill="#c8431f" fill-opacity="0.10" stroke="#c8431f" stroke-width="22" stroke-opacity="0.6"/>
+  <g clip-path="url(#ring)" fill="#c8431f" fill-opacity="0.85">
+    <circle cx="690" cy="296" r="50"/>
+    <path d="M690 360 C620 360 590 400 590 460 L590 520 L790 520 L790 460 C790 400 760 360 690 360 Z"/>
+  </g>
+    </g>
+  <g transform="translate(374 650) rotate(45)">
+    <path d="M0 -250 L150 150 L0 70 L-150 150 Z" fill="#c8431f" stroke="#c8431f" stroke-width="24" stroke-linejoin="round"/>
+  </g>
+</svg>
