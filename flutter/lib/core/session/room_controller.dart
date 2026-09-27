@@ -19,6 +19,7 @@ import '../sensors/floor.dart';
 import '../sensors/location.dart';
 import '../ws/outbound_guard.dart';
 import '../ws/room_connection.dart';
+import 'ar_guide.dart';
 
 const Object _unset = Object();
 
@@ -171,6 +172,15 @@ class RoomController extends Notifier<RoomViewState> {
     return true;
   }
 
+  /// 今のセッションのまま接続し直す（二重接続で閉じられたあとの「もう一度つなぐ」）。
+  /// セッションが無い・デモ中なら false（デモは接続し直す相手がいない）。
+  bool reconnect() {
+    final s = state.session;
+    if (s == null || s.isDemo) return false;
+    _connect(s);
+    return true;
+  }
+
   // ---------------- WebSocket（ユーザー操作） ----------------
 
   /// host の承認（guest が送っても何も起きない）。
@@ -210,6 +220,7 @@ class RoomController extends Notifier<RoomViewState> {
       ref.read(demoModeProvider.notifier).end();
     }
     ref.read(ownFloorProvider.notifier).clear();
+    ref.read(arGuideProvider.notifier).clear();
     _demoFloorPreset = false;
     state = const RoomViewState();
   }

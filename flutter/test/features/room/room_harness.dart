@@ -121,9 +121,12 @@ MeetSlots fakeSlots() => MeetSlots(
 
 /// テスト1本ぶんの環境。
 class RoomHarness {
-  RoomHarness({this.demo = false});
+  RoomHarness({this.demo = false, this.slots});
 
   final bool demo;
+
+  /// 3D・道順の差し替え（null なら fakeSlots）。
+  final MeetSlots? slots;
   final api = FakeApi();
   final loc = FakeLocation();
   final sockets = <FakeSocket>[];
@@ -153,7 +156,7 @@ class RoomHarness {
       headingProvider.overrideWith((ref) => Stream<double?>.value(null)),
       placesProvider.overrideWith((ref) => Future.value(testPlaces)),
       poisProvider.overrideWith((ref) => Future.value(testPois)),
-      meetSlotsProvider.overrideWithValue(fakeSlots()),
+      meetSlotsProvider.overrideWithValue(slots ?? fakeSlots()),
       // 端末の secure storage（プラグイン）には触らない。
       sessionStoreProvider.overrideWithValue(MemorySessionStore()),
       if (!demo) ...[

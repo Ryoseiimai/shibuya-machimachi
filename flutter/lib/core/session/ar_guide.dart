@@ -2,10 +2,10 @@
 // room（人モードの道順）や route（場所モード）が、端末の中で計算した道順の線をここに置くと、
 // AR は相手の方向ではなく「次に向かう点」を指す。何も置かれていなければ相手（partnerEstimateProvider）を指す。
 // 道順・行き先はどこにも送らない（SPEC §1.3）。
-// 意図的な簡略化: 機能フォルダ内の仮置き。統合時に core へ移す（統合担当への依頼に記載）。
+// 統合時に ar_home の仮置きから core へ移した。RoomController.leave() でも消す。
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/core.dart';
+import '../geo.dart';
 
 /// AR に指させる道順。
 class ArGuide {

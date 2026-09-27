@@ -44,9 +44,7 @@ class PluginArCamera implements ArCamera {
     if (_controller?.value.isInitialized ?? false) return ArCameraStatus.ready;
     final gen = ++_generation;
 
-    final permission = await Permission.camera.request();
-    if (!permission.isGranted && !permission.isLimited) return ArCameraStatus.denied;
-
+    // カメラの無い端末（シミュレータ・一部の iPad など）では許可を求めない（先に一覧を見る。一覧だけなら許可は要らない）。
     final List<CameraDescription> cameras;
     try {
       cameras = await availableCameras();
@@ -54,6 +52,9 @@ class PluginArCamera implements ArCamera {
       return ArCameraStatus.unavailable;
     }
     if (cameras.isEmpty) return ArCameraStatus.unavailable;
+
+    final permission = await Permission.camera.request();
+    if (!permission.isGranted && !permission.isLimited) return ArCameraStatus.denied;
     final back = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.back, orElse: () => cameras.first);
 
     final controller = CameraController(back, ResolutionPreset.high, enableAudio: false);

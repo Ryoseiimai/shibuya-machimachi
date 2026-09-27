@@ -287,16 +287,9 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
     if (mounted) context.go('/new');
   }
 
-  /// 「もう一度つなぐ」（二重接続で閉じられたあと）。
-  /// 意図的な簡略化: core に「今のセッションで接続し直す」口が無いので、leave → 同じ秘密値を保存し直す → resume で代用する。
-  /// core に RoomController.reconnect() が入ったらそれに置き換える。
+  /// 「もう一度つなぐ」（二重接続で閉じられたあと）。今のセッションのまま接続し直す。
   Future<void> _reconnect() async {
-    final s = ref.read(roomControllerProvider).session;
-    if (s == null || s.isDemo) return _enter();
-    final store = ref.read(activeSessionStoreProvider);
-    await _ctrl.leave();
-    await store.save(s);
-    if (mounted) await _enter();
+    if (!_ctrl.reconnect()) await _enter();
   }
 
   @override

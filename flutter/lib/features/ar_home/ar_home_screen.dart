@@ -14,11 +14,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/core.dart';
 import 'ar_camera.dart';
-import 'ar_guide.dart';
 import 'ar_view.dart';
 import 'home_view.dart';
 
-export 'ar_guide.dart' show ArGuide, ArGuideNotifier, arGuideProvider;
+export '../../core/session/ar_guide.dart' show ArGuide, ArGuideNotifier, arGuideProvider;
 
 /// `/`: アプリの入口。LP の要点（できること・安心の設計・出典）と、作る/場所へ行く/デモの入口。
 class HomeScreen extends ConsumerWidget {

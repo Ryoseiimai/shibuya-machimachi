@@ -51,7 +51,7 @@ class BrandHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Semantics(header: true, child: const Text('渋谷マチマチ', style: AppText.h1)),
+          Semantics(header: true, container: true, child: const Text('渋谷マチマチ', style: AppText.h1)),
           const SizedBox(height: 2),
           Text('渋谷駅から半径${km.toStringAsFixed(km == km.roundToDouble() ? 0 : 1)}km限定の1対1待ち合わせ', style: AppText.subtitle),
         ],

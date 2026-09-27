@@ -46,11 +46,16 @@ class _MeetViewState extends ConsumerState<MeetView> {
 
   final List<ProviderSubscription<Object?>> _subs = [];
 
+  /// 今の道順の行き先（AR に「次の曲がり角」を指させるときの名前・階に使う）。
+  RouteTarget? _routeTargetNow;
+  late final ArGuideNotifier _arGuide;
+
   RoomController get _ctrl => ref.read(roomControllerProvider.notifier);
 
   @override
   void initState() {
     super.initState();
+    _arGuide = ref.read(arGuideProvider.notifier);
     // 通信が止まっていても「最終更新」「古い位置」の表示を進めるための定期見直し。
     _poll = Timer.periodic(kStatusBannerPoll, (_) {
       if (mounted) setState(() => _nowMs = DateTime.now().millisecondsSinceEpoch);
@@ -84,6 +89,14 @@ class _MeetViewState extends ConsumerState<MeetView> {
       s.close();
     }
     _map.dispose();
+    // AR が古い道順を指し続けないように（meet を離れたら相手を指す既定に戻す）。
+    // 画面の組み立て中に provider を変えないよう、次のマイクロタスクで消す（アプリ終了時は何もしない）。
+    final guide = _arGuide;
+    scheduleMicrotask(() {
+      try {
+        guide.clear();
+      } catch (_) {}
+    });
     super.dispose();
   }
 
@@ -128,7 +141,10 @@ class _MeetViewState extends ConsumerState<MeetView> {
       _routeToSpot = on && toSpot;
       _routeFitted = false;
     });
-    if (!on) _afterBuild(() => _map.setRoute(null));
+    if (!on) {
+      _afterBuild(() => _map.setRoute(null));
+      _arGuide.clear();
+    }
     unawaited(Haptics.light());
   }
 
@@ -138,6 +154,11 @@ class _MeetViewState extends ConsumerState<MeetView> {
     final fit = line != null && !_routeFitted;
     if (fit) _routeFitted = true;
     _afterBuild(() => _map.setRoute(line, fit: fit));
+    // AR には道順の次の曲がり角を指させる（線は端末の中だけ。どこにも送らない）。
+    final t = _routeTargetNow;
+    _arGuide.set(line == null || t == null
+        ? null
+        : ArGuide(route: line, destinationName: t.name, destinationLevel: t.level));
   }
 
   RouteTarget? _routeTarget(RoomState s, GeoPoint? partner, List<Place>? places) {
@@ -247,7 +268,8 @@ class _MeetViewState extends ConsumerState<MeetView> {
         ]),
       ),
       if (_routeOn)
-        slots.routePanel(context, _routeTarget(s, partner, placeList), _onRoute, () => unawaited(Haptics.success())),
+        slots.routePanel(context, _routeTargetNow = _routeTarget(s, partner, placeList), _onRoute,
+            () => unawaited(Haptics.success())),
 
       // 3. 待ち合わせ場所（一覧が読めなければカードごと隠す）
       if (!places.hasError) _meetSpotCard(s, placeList),

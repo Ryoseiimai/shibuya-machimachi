@@ -6,7 +6,8 @@ plugins {
 
 android {
     namespace = "jp.co.ryoseiworld.shibuya_machimachi"
-    compileSdk = flutter.compileSdkVersion
+    // permission_handler_android 13 が API 37 以上でのコンパイルを求める（Flutter 既定は 36）。targetSdk は既定のまま。
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

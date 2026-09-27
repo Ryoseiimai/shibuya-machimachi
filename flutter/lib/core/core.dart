@@ -11,6 +11,7 @@ export 'providers.dart';
 export 'sensors/floor.dart';
 export 'sensors/location.dart';
 export 'sensors/orientation.dart';
+export 'session/ar_guide.dart';
 export 'session/room_controller.dart';
 export 'session/session_store.dart';
 export 'theme.dart';
