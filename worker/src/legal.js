@@ -30,8 +30,8 @@ const CONTACT_EMAIL = "kaeru3160@gmail.com";
 const REPO_URL = "https://github.com/Ryoseiimai/shibuya-machimachi";
 const PUBLISHER_JA = "今井涼晴（個人開発者）";
 const PUBLISHER_EN = "Ryosei Imai (individual developer, Japan)";
-const UPDATED_JA = "2026年9月27日";
-const UPDATED_EN = "September 27, 2026";
+const UPDATED_JA = "2026年9月28日";
+const UPDATED_EN = "September 28, 2026";
 
 const PAGE_STYLE = `
   :root { --brand-orange: #c8431f; --brand-orange-on-soft: #8a2a10; --muted-text: #6b5d53; }
@@ -125,7 +125,7 @@ const PRIVACY_BODY = `
 <p>法令にもとづく場合を除き、取得した情報を第三者に提供しません。上に書いた Cloudflare（サーバー）と TypeSafe AI Jev（判定。座標やニックネームは送りません）は、アプリの機能を動かすためだけに使います。</p>
 
 <h2>4. 端末の中に残る情報</h2>
-<p>参加中の待ち合わせに再接続するための情報（部屋ごとの一時的な鍵）を、アプリを開いている間だけ端末の中に保持します。アプリを終了すると消えます。</p>
+<p>参加中の待ち合わせに再接続するための情報（部屋ごとの一時的な鍵）を、端末の中に保持します。アプリが途中で終了しても待ち合わせに戻れるように、アプリを閉じたあとも残る場合があります。その場合も、待ち合わせが終わったとき・部屋を出たときに消し、保存から${TTL_HOURS}時間を過ぎたものは次にアプリを開いたときに消します。この情報は、端末のバックアップや機種変更の移行には含めません。</p>
 
 <h2>5. 利用する人について</h2>
 <p>本アプリは、すでに知っている友人・知人と待ち合わせるためのものです。知らない人を探したり、知らない人と出会ったりする機能はありません。招待リンクは1回しか使えず、1つの待ち合わせに入れるのは2人までです。</p>
@@ -161,6 +161,7 @@ const PRIVACY_BODY = `
 <p><strong>Network information</strong> — traffic goes through Cloudflare, which processes network information such as IP addresses. To prevent abuse, the number of meetups created is rate-limited using a short-lived hashed value of the IP address. The developer does not store or view IP addresses.</p>
 <p><strong>Camera and orientation</strong> — used on-device only for the AR view and the direction arrow; never sent or stored.</p>
 <p><strong>Walking directions</strong> — computed on your device only. Your position, destination, route, and the floor you pick for directions are never sent or stored (in a meetup, the floor you select is sent only to show the floor difference, as described above).</p>
+<p><strong>Data kept on your device</strong> — a temporary per-room key used to reconnect to the meetup you are in. So that you can return to the meetup if the app is closed midway, it may remain after the app is closed; even then, it is deleted when the meetup ends or you leave it, and anything saved more than ${TTL_HOURS} hours ago is deleted the next time you open the app. It is not included in device backups or transfers to a new device.</p>
 <h2>2. Map data</h2>
 <p>When the 3D map is shown, the app loads map images directly from the Geospatial Information Authority of Japan (GSI tiles) and, in the high-quality view, building data from the PLATEAU distribution server. These servers receive ordinary network information (such as your IP address and the requested map area). Shop data (OpenStreetMap) and simplified building data are bundled in the app. The walkway data for directions (OpenStreetMap) is loaded from this site as a public file.</p>
 <h2>3. Sharing with third parties</h2>
