@@ -51,3 +51,23 @@ jobs:
           node --check ../app/src/demo.js
           node --check ../app/scripts/build-www.mjs
           node --test ../app/test/*.test.mjs
+
+  flutter-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # 手元で使っている版に固定（上げるときは flutter/SPEC.md の版と一緒に）
+          flutter-version: 3.47.5
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Unit and widget tests
+        run: flutter test
