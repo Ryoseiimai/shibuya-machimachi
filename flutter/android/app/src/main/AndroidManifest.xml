@@ -1,10 +1,22 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- camera_android_camerax が足す権限を外す。録音はしない（enableAudio: false）・保存もしない
+         （プライバシーポリシーの「カメラ映像は送信も保存もしない」と申告を合わせる） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
+    <!-- カメラが無い端末にも入れられるように（AR 以外は使える）。camerax の camera.any(required=true) を上書き -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" tools:replace="android:required" />
+    <!-- 待ち合わせの一時的な鍵（secure storage）をバックアップ・機種変更の移行に載せない
+         （allowBackup=false は Android 11 まで、dataExtractionRules は Android 12 以降の端末間転送も含む） -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="渋谷マチマチ"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
