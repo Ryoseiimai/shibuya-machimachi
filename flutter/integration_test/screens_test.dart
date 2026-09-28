@@ -1,6 +1,8 @@
-// 主要画面を順に開いて撮る（デモと場所モード。何もサーバーへ送らない）。
+// 主要画面を順に開いて撮る（デモと場所モード・ホームの「続きを開く」。何もサーバーへ送らない）。
 // 実行: flutter drive --driver=test_driver/integration_test.dart --target=integration_test/screens_test.dart -d <UDID>
 // 撮影はホスト側が「SHOT:<名前>」の行を見て simctl io screenshot で行う。
+// 06 の前提: シミュレータの位置を `xcrun simctl location <UDID> set 35.658588,139.702834`（B2→B1 のエスカレーター手前）にし、
+// 位置の許可を入れておく（インストールし直すと外れるので、テスト開始後に `xcrun simctl privacy <UDID> grant location <bundle id>`）。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:shibuya_machimachi/core/core.dart';
@@ -68,5 +70,16 @@ void main() {
     await scrollToTop(tester, find.text('道順で案内').first);
     await wait(tester, const Duration(seconds: 3));
     await shot(tester, '06_route_floor');
+
+    // 13 ホームの「続きを開く」（OS にアプリを終了させられたあと、保存した待ち合わせへ戻る入口）。
+    // 撮影用の架空の部屋を端末に保存して見せ、撮ったら消す（サーバーには何も送らない）。
+    final store = SecureSessionStore();
+    final fake = RoomSession(roomId: 'f' * 32, role: Role.guest, secret: '0' * 32);
+    await store.save(fake);
+    c.read(routerProvider).go('/');
+    await waitFor(tester, find.text('続きを開く'));
+    await scrollToStart(tester);
+    await shot(tester, '13_home_resume');
+    await store.clear(fake.roomId);
   });
 }

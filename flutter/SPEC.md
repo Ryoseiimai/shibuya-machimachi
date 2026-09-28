@@ -49,6 +49,9 @@ VR（WebXR）は移植しない（iPhone では元から出していない）。
 - カメラ映像は画面に出すだけ（`startImageStream`・撮影・録画・録音は使わない。`enableAudio: false`）
 - WS の URL（secret 入り）・座標・secret を `print`/`debugPrint`/例外メッセージ/クラッシュレポートに出さない（`GeoPoint`・`PositionFix`・`RoomSession` の toString は伏せ字にしてある）
 - 2人部屋・招待1回きり・Jev に座標/ニックネームを渡さない（サーバー側の約束。クライアントは変えない）
+- 「共有をやめる」は押した時点で位置の送信を止め、**押したことを保存する**（通信が切れていても、アプリが終了して開き直しても、位置は送らず stop だけを送る。終端の state が来たら保存ごと消す）
+- 本物の部屋が続いている間（終端でない・stop が未送信）は、デモ・別の部屋の作成・別の部屋への参加を始めない（`ApiException('room_active')`）。`leave()` は stop を送らないので、部屋を捨てる前に止める
+- 古い測位（1分より前。`kLocationResendMaxAgeMs`）は送らない。位置の監視がエラーになったら最後の位置を捨てる（GPS が止まったのに新しい位置のふりをしない）
 
 ---
 
@@ -68,7 +71,9 @@ lib/
     ws/room_connection.dart   再接続（1→2→4→8→15s）・終わり方（4001/1000/終端/404×2/401）
     ws/outbound_guard.dart    2048バイト上限・location 1.2秒間引き
     session/room_controller.dart  部屋の司令塔（Riverpod Notifier）＋ partnerEstimateProvider
-    session/session_store.dart    secure storage に roomId/role/secret/inviteUrl
+    session/session_store.dart    secure storage に roomId/role/secret/inviteUrl/保存時刻/stop 未送信
+                                  （iOS はキーチェーン first_unlock_this_device、Android は allowBackup=false と
+                                  dataExtractionRules でバックアップ・移行に載せない。保存から3時間で消す）
     sensors/location.dart     positionProvider・LocationService（本物/デモ）
     sensors/orientation.dart  headingProvider（コンパス）・tiltProvider（傾き beta）
     sensors/floor.dart        ownFloorProvider（今いる階。変えたら部屋へ floor を送る）
@@ -310,7 +315,7 @@ class ArScreen extends ConsumerStatefulWidget { const ArScreen({super.key}); }  
 - ヒーロー: キッカー「渋谷駅から1.5km限定・無料」、見出し「今日、渋谷の待ち合わせで困ったから作りました。」、副見出し「**渋谷マチマチ** — お互いに承認した2人だけで、渋谷で迷わず会える」、主ボタン「待ち合わせを作る」＋小さく「（無料・登録なし）」→ `/new`、注記「ニックネームだけで今すぐ使えます。アカウント登録は不要です。」、リンク「1人で使う：場所へ行く（道順で案内）」→ `/go`、「デモで試す（1台で体験）」→ `/new?demo=1`
 - 「渋谷マチマチができること」7項目・「安心して使えるための設計」6項目・「使い方は3ステップ」（文言は lp.js / この下の表）。長くなるので折りたたみでもよい
 - 「このアプリについて」: GitHub（https://github.com/Ryoseiimai/shibuya-machimachi）、プライバシーポリシー（`{本番}/privacy`）、サポート（`{本番}/support`）を url_launcher で、ライセンス（`showLicensePage`）、出典 `Attributions.all`
-- 保存済みの部屋があれば「続きを開く」を出してよい（任意）
+- 保存済みの部屋があれば「続きを開く」を出す（`savedRoomProvider`。stop が未送信ならその旨も）。起動時は main.dart が保存済みの部屋を `initialLocationProvider` に入れて、その部屋から開く（OS にアプリを終了させられても戻れる。Web 版でタブを開き直すと部屋に戻るのと同じ）
 
 安心の設計6項目: 承認した2人だけに位置が届く / 招待リンクは1回きりで無効になる / どちらかが押せば、いつでも即座に停止できる / 待ち合わせは3時間で自動的に削除される / 渋谷駅から1.5km以内でだけ使える / 位置情報はサーバーのログに残さない
 
@@ -370,7 +375,8 @@ class ArScreen extends ConsumerStatefulWidget { const ArScreen({super.key}); }  
 ディープリンク（`lib/core/deep_link.dart`・app_links。Flutter 標準のディープリンクは切ってある）:
 - `https://shibuya-machimachi.kaeru3160.workers.dev/r/<id>?invite=<t>` → `/r/<id>?invite=<t>`（iOS はユニバーサルリンク、Android は App Links。どちらも §10 のサーバー変更と iOS の Associated Domains が要る）
 - `shibuyamachimachi-flutter://r/<id>?invite=` → 同上、`://demo` → `/new?demo=1`、`://go` → `/go`、`://new` → `/new`
-- 同じ URL は二重に開かない
+- 同じ URL が 2 秒以内に続けて届いたときだけ無視する（起動時の二重配達を吸収）。あとでもう一度タップされた同じリンクは開く
+- 本物の部屋の途中に `://demo` が開かれてもデモは始めない（作成画面に案内と「今の待ち合わせに戻る」を出す）
 - スキームを `shibuyamachimachi-flutter` にしたのは、同じ端末の Capacitor 版（`shibuyamachimachi://`）と取り合わないため。Flutter 版に置き換える時に戻す
 
 ---
@@ -382,10 +388,11 @@ class ArScreen extends ConsumerStatefulWidget { const ArScreen({super.key}); }  
 | 位置（使用中のみ） | NSLocationWhenInUseUsageDescription「待ち合わせ相手との距離・方角の計算と、道順の案内に使います。お互いが承認するまで位置は送りません。渋谷駅から1.5kmの外では送りません。」 | ACCESS_FINE_LOCATION・ACCESS_COARSE_LOCATION |
 | カメラ（AR） | NSCameraUsageDescription「ARで相手のいる方向を示すため、カメラの映像を画面に表示します。映像は送信も保存もしません。」 | CAMERA（required=false） |
 | モーション（傾き） | NSMotionUsageDescription「ARで、端末の傾きに合わせて相手のいる方向を表示するために使います。」 | 不要 |
-| マイク | NSMicrophoneUsageDescription「このアプリは音声を録音しません（カメラの部品が必要とするための記載です）。」 | 宣言しない |
+| マイク | NSMicrophoneUsageDescription「このアプリは音声を録音しません（カメラの部品が必要とするための記載です）。」 | 宣言しない（camerax が足す RECORD_AUDIO・WRITE/READ_EXTERNAL_STORAGE は `tools:node="remove"` で外す。`camera.any` も required=false に上書き） |
 | 通信 | — | INTERNET |
 
 - バックグラウンド位置は使わない（`NSLocationAlways…` は入れない）
+- iOS は iPhone 専用（`TARGETED_DEVICE_FAMILY = 1`、Capacitor 版と同じ）・縦画面のみ（AR のカメラ表示と向きの計算が縦前提のため）
 - permission_handler は Podfile で CAMERA・LOCATION_WHENINUSE・SENSORS だけ有効
 - 輸出コンプライアンス: `ITSAppUsesNonExemptEncryption = false`
 
@@ -420,7 +427,7 @@ class ArScreen extends ConsumerStatefulWidget { const ArScreen({super.key}); }  
 cd flutter
 flutter pub get
 flutter analyze                      # 0 issues
-flutter test                         # core 33件 + 各機能のテスト
+flutter test                         # core + 各機能のテスト（CI の flutter-check ジョブでも analyze と test を回す）
 flutter build ios --simulator --debug
 flutter run --dart-define=API_BASE=http://<Mac の IP>:<port>   # ローカル wrangler に向けるとき（8787・8799 は使わない）
 ```
@@ -444,7 +451,8 @@ flutter run --dart-define=API_BASE=http://<Mac の IP>:<port>   # ローカル w
 ## 13. 意図的な簡略化（既知の限界と本格対応の入口）
 
 - WebSocket のハンドシェイクで Sec-WebSocket-Accept を照合していない（TLS 前提）→ 厳密にするなら package:crypto で SHA-1 照合（`room_socket.dart`）
-- 圏外では location を送らないので、サーバー側の `self.inArea`/相手から見た `other.inArea` は古い値のまま残る（相手には `lastUpdatedAt` が古くなることで伝わる）→ 圏外を相手に明示したいなら、座標を含まない「圏外になった」メッセージをサーバーに足す
-- 止まっていて GPS が更新されないとき、最後の位置を 20 秒ごとに送り直す（相手の画面・判定で「古い」扱いにならないように。送るのは既に送った位置と同じ・active かつ圏内のときだけ）
+- **Web 版との既知の差（サーバーの変更が要るので未対応）**: 圏外では location を送らないので、サーバー側の `inArea` は true・最後の圏内の位置が残る。相手には Web 版の「相手が渋谷エリアの外にいるため、距離を計算できません」は出ず、最長約2分は最後の距離・矢印が出て（その間の「会えた？」もその位置で判定されうる）、そのあと「位置が古い」表示になる → 座標を含まない `{"type":"area","inArea":false}` をサーバー（room.js で inArea=false・lastLocation を消す）に足し、`RoomController._onFix` で圏外に出たときに1回送る。本番反映は指示された工程で `wrp`
+- 止まっていて GPS が更新されないとき、最後の位置を 20 秒ごとに送り直す（相手の画面・判定で「古い」扱いにならないように。送るのは既に送った位置と同じ・active かつ圏内・**測位から1分以内**のときだけ。GPS が止まると相手には最長約3分で「古い」と出る。Web 版は約2分）
+- iOS のキーチェーンはアプリを削除しても残る。再インストールの検出はしていない（残った保存も保存から3時間で次の起動時に消える）→ 厳密にするなら、削除で消える場所（NSUserDefaults 等）に初回起動の印を置き、無ければ deleteAll
 - flutter_compass は更新停止中 → 自前 MethodChannel（iOS `CLLocationManager.startUpdatingHeading`、Android `TYPE_ROTATION_VECTOR`）が入口
 - 地上の階推定（道順）は route.js と同じ簡略化。ビル単位の階対応表や国交省の歩行空間ネットワークで補正するのが入口
