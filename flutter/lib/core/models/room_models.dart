@@ -260,7 +260,15 @@ class JoinResult {
 
 /// 端末に保存する接続情報（secure storage）。secret を含むのでログに出さない。
 class RoomSession {
-  const RoomSession({required this.roomId, required this.role, required this.secret, this.inviteUrl, this.isDemo = false});
+  const RoomSession({
+    required this.roomId,
+    required this.role,
+    required this.secret,
+    this.inviteUrl,
+    this.isDemo = false,
+    this.savedAtMs,
+    this.stopPending = false,
+  });
   final String roomId;
   final Role role;
   final String secret;
@@ -269,7 +277,31 @@ class RoomSession {
   final String? inviteUrl;
   final bool isDemo;
 
-  Map<String, Object?> toJson() => {'roomId': roomId, 'role': role.name, 'secret': secret, 'inviteUrl': inviteUrl};
+  /// 端末に保存した時刻（作成・参加した時刻）。これから 3 時間（部屋の寿命）を過ぎた保存は消す。
+  final int? savedAtMs;
+
+  /// 「共有をやめる」を押したが、まだサーバーに届いたと確かめられていない。
+  /// 開き直し・つなぎ直しのあとも位置は送らず、stop だけを送る（終端の state が来たら保存ごと消す）。
+  final bool stopPending;
+
+  RoomSession copyWith({bool? stopPending, int? savedAtMs}) => RoomSession(
+        roomId: roomId,
+        role: role,
+        secret: secret,
+        inviteUrl: inviteUrl,
+        isDemo: isDemo,
+        savedAtMs: savedAtMs ?? this.savedAtMs,
+        stopPending: stopPending ?? this.stopPending,
+      );
+
+  Map<String, Object?> toJson() => {
+        'roomId': roomId,
+        'role': role.name,
+        'secret': secret,
+        'inviteUrl': inviteUrl,
+        'savedAt': savedAtMs,
+        if (stopPending) 'stopPending': true,
+      };
 
   static RoomSession? fromJson(Object? json) {
     final m = _map(json);
@@ -277,7 +309,14 @@ class RoomSession {
     final roomId = _str(m?['roomId']);
     final secret = _str(m?['secret']);
     if (role == null || roomId == null || secret == null) return null;
-    return RoomSession(roomId: roomId, role: role, secret: secret, inviteUrl: _str(m?['inviteUrl']));
+    return RoomSession(
+      roomId: roomId,
+      role: role,
+      secret: secret,
+      inviteUrl: _str(m?['inviteUrl']),
+      savedAtMs: _int(m?['savedAt']),
+      stopPending: _bool(m?['stopPending']) ?? false,
+    );
   }
 
   @override

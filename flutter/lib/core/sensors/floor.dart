@@ -20,13 +20,23 @@ class OwnFloorNotifier extends Notifier<String?> {
     ref.read(roomControllerProvider.notifier).sendFloor(label);
   }
 
-  /// サーバーの self.floor を反映する。ユーザーが変えてから5秒以内で、まだ追いついていなければ上書きしない。
+  /// サーバーの self.floor を反映する（null＝サーバーでは未選択、も反映する）。
+  /// ユーザーが変えてから5秒以内で、まだ追いついていなければ上書きしない。
   void syncFromServer(String? label) {
-    if (!isValidFloor(label)) return;
+    if (label != null && !isValidFloor(label)) return;
     final at = _userSetAtMs;
     if (at != null && label != state && DateTime.now().millisecondsSinceEpoch - at < kFloorOverrideMs) return;
     _userSetAtMs = null;
     if (state != label) state = label;
+  }
+
+  /// WebSocket がつながり直したとき: 選んである階を送り直す（切れている間に選んだ階は届いていないため）。
+  void resendAfterReconnect() {
+    final label = state;
+    if (label == null) return;
+    if (ref.read(roomControllerProvider.notifier).sendFloor(label)) {
+      _userSetAtMs = DateTime.now().millisecondsSinceEpoch;
+    }
   }
 
   /// 部屋を出たとき等。

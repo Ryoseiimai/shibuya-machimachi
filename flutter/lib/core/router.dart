@@ -8,6 +8,7 @@ import '../features/map3d/map3d_screen.dart';
 import '../features/room/room_screen.dart';
 import '../features/route/route_screen.dart';
 import 'constants.dart';
+import 'models/room_models.dart';
 import 'widgets/common.dart';
 
 abstract final class AppRoutes {
@@ -47,8 +48,16 @@ GoRouter buildRouter({String initialLocation = AppRoutes.home}) => GoRouter(
       ],
     );
 
+/// 起動したときに開く場所。main.dart が、端末に保存した待ち合わせ（OS に終了させられた部屋）があれば
+/// `/r/<id>` に差し替える（Web 版でタブを開き直すと部屋に戻るのと同じ）。
+final initialLocationProvider = Provider<String>((ref) => AppRoutes.home);
+
+/// 保存した待ち合わせから、起動時に開く場所を決める（無ければホーム）。
+String initialLocationFor(RoomSession? saved) =>
+    saved != null && kHex32.hasMatch(saved.roomId) ? AppRoutes.room(saved.roomId) : AppRoutes.home;
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final r = buildRouter();
+  final r = buildRouter(initialLocation: ref.read(initialLocationProvider));
   ref.onDispose(r.dispose);
   return r;
 });

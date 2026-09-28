@@ -18,8 +18,12 @@ const kMsgDuplicate = '別の画面でこの待ち合わせが開かれたため
 const kMsgUnauthorized = 'この待ち合わせに接続できませんでした。招待リンクを開き直すか、新しく待ち合わせを作ってください。';
 
 /// 「待ち合わせを作る」の失敗文（html.js / app.js の initCreateScreen）。
+/// 本物の待ち合わせの途中で、デモ・別の待ち合わせを始めようとした（RoomController が止めた）。
+const kMsgRoomActive = '今の待ち合わせが続いています。新しく始めるには、先に今の待ち合わせで「共有をやめる」を押してください。';
+
 String createErrorText(ApiException e) => switch (e.reason) {
       'invalid_nickname' => kMsgNicknameRequired,
+      'room_active' => kMsgRoomActive,
       'rate_limited' => e.message ?? kMsgRateLimitedDefault,
       'network' => kMsgNetwork,
       _ => '作成に失敗しました(${e.reason})',
@@ -28,6 +32,7 @@ String createErrorText(ApiException e) => switch (e.reason) {
 /// 「承認して参加」の失敗文（その場で出すもの）。満員・期限切れ・見つからない・招待不可は行き止まり画面へ回す。
 String joinErrorText(ApiException e) => switch (e.reason) {
       'invalid_nickname' => kMsgNicknameRequired,
+      'room_active' => kMsgRoomActive,
       'network' => kMsgNetwork,
       _ => '参加に失敗しました(${e.reason})',
     };

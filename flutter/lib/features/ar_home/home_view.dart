@@ -75,6 +75,7 @@ class HomeView extends ConsumerWidget {
     showHeader: false,
     children: [
       const _HomeHeader(),
+      const _ResumeCard(),
       const _Hero(),
       const _Section(key: ValueKey('home-steps'), title: '使い方は3ステップ', child: _Steps()),
       const _Section(key: ValueKey('home-trust'), title: '安心して使えるための設計', child: _TrustList()),
@@ -83,6 +84,35 @@ class HomeView extends ConsumerWidget {
       const AttributionText(Attributions.all),
     ],
   );
+}
+
+/// 端末に保存した待ち合わせがあれば「続きを開く」（OS にアプリを終了させられたあとでも部屋に戻れる。SPEC §6.4）。
+class _ResumeCard extends ConsumerWidget {
+  const _ResumeCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved = ref.watch(savedRoomProvider).value;
+    if (saved == null) return const SizedBox.shrink();
+    return AppCard(
+      key: const ValueKey('home-resume'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: PhraseText('待ち合わせの／続きがあります', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+          ),
+          PrimaryButton(label: '続きを開く', onPressed: () => context.go('/r/${saved.roomId}')),
+          if (saved.stopPending)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: PhraseText('「共有をやめる」が／まだ相手に／届いていません。／開くと、つながったときに／伝えます。', style: AppText.hint),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _HomeHeader extends StatelessWidget {

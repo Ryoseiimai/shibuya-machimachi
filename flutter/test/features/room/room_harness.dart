@@ -121,14 +121,14 @@ MeetSlots fakeSlots() => MeetSlots(
 
 /// テスト1本ぶんの環境。
 class RoomHarness {
-  RoomHarness({this.demo = false, this.slots});
+  RoomHarness({this.demo = false, this.slots, FakeLocation? loc}) : loc = loc ?? FakeLocation();
 
   final bool demo;
 
   /// 3D・道順の差し替え（null なら fakeSlots）。
   final MeetSlots? slots;
   final api = FakeApi();
-  final loc = FakeLocation();
+  final FakeLocation loc;
   final sockets = <FakeSocket>[];
   final clipboard = <String>[];
   int haptics = 0;

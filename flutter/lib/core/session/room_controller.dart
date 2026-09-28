@@ -3,7 +3,10 @@
 //   - phase == active の state を受けるまで location を送らない
 //   - 渋谷駅から 1500m の外では送らない（端末の中で判定し、圏外表示だけ出す）
 //   - 1.2秒に1回まで・2048バイトまで
-//   - stop したら（WS が切れていても）直ちに位置の送信をやめ、つながったら stop を送り直す
+//   - stop したら（WS が切れていても）直ちに位置の送信をやめ、つながったら stop を送り直す。
+//     押したことは保存もする（アプリが終了して開き直しても、位置は送らず stop だけを送る）
+//   - 本物の部屋が続いている間は、デモ・別の部屋を始めない（stop を送らずに部屋を捨てないため）
+//   - 古い測位（kLocationResendMaxAgeMs より前）は送らない（GPS が止まったのに新しい位置のふりをしない）
 // 機能側（features/*）は location を直接送れない。送るのはこのクラスだけ。
 import 'dart:async';
 
@@ -20,6 +23,7 @@ import '../sensors/location.dart';
 import '../ws/outbound_guard.dart';
 import '../ws/room_connection.dart';
 import 'ar_guide.dart';
+import 'session_store.dart';
 
 const Object _unset = Object();
 
@@ -113,6 +117,16 @@ class RoomController extends Notifier<RoomViewState> {
   int _lastLocationSentMs = 0;
   bool _demoFloorPreset = false;
 
+  /// 保存先への書き込みを順番に行う（stop の保存が、終端での削除を追い越して残らないように）。
+  Future<void> _storeChain = Future<void>.value();
+
+  Future<void> _queueStore(Future<void> Function(SessionStore store) op) {
+    final store = ref.read(activeSessionStoreProvider);
+    final next = _storeChain.then((_) => op(store)).catchError((Object _) {});
+    _storeChain = next;
+    return next;
+  }
+
   @override
   RoomViewState build() {
     ref.onDispose(_teardown);
@@ -124,9 +138,11 @@ class RoomController extends Notifier<RoomViewState> {
   // ---------------- HTTP ----------------
 
   /// 部屋を作って host として接続する。ニックネームが不正なら ApiException('invalid_nickname')。
+  /// 本物の部屋が続いている（終わっていない・stop がまだ届いていない）間は ApiException('room_active')。
   Future<RoomSession> createRoom(String rawNickname) async {
     final nickname = sanitizeNickname(rawNickname);
     if (nickname == null) throw const ApiException('invalid_nickname');
+    if (hasLiveRealRoom) throw const ApiException('room_active');
     final api = _api;
     final r = await api.createRoom(nickname);
     final session = RoomSession(
@@ -135,14 +151,18 @@ class RoomController extends Notifier<RoomViewState> {
       secret: r.hostSecret,
       inviteUrl: api.inviteUrl(r.roomId, r.inviteToken),
       isDemo: ref.read(demoModeProvider),
+      savedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
-    await ref.read(activeSessionStoreProvider).save(session);
+    await _queueStore((st) => st.save(session));
     _connect(session);
     return session;
   }
 
   /// デモを始める（ニックネームが空なら「あなた」）。
+  /// 本物の部屋が続いている間は始めない（ApiException('room_active')）。leave() は stop を送らないので、
+  /// ここで本物の部屋を捨てると、相手に最後の位置が残り続け、本人も止められなくなる。
   Future<RoomSession> startDemo(String rawNickname) async {
+    if (hasLiveRealRoom) throw const ApiException('room_active');
     await leave();
     ref.read(demoModeProvider.notifier).start();
     return createRoom(sanitizeNickname(rawNickname) ?? 'あなた');
@@ -155,9 +175,15 @@ class RoomController extends Notifier<RoomViewState> {
   Future<RoomSession> join(String roomId, String invite, String rawNickname) async {
     final nickname = sanitizeNickname(rawNickname);
     if (nickname == null) throw const ApiException('invalid_nickname');
+    if (hasLiveRealRoom && state.session?.roomId != roomId) throw const ApiException('room_active');
     final r = await _api.join(roomId, invite, nickname);
-    final session = RoomSession(roomId: roomId, role: Role.guest, secret: r.guestSecret);
-    await ref.read(activeSessionStoreProvider).save(session);
+    final session = RoomSession(
+      roomId: roomId,
+      role: Role.guest,
+      secret: r.guestSecret,
+      savedAtMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _queueStore((st) => st.save(session));
     _connect(session);
     return session;
   }
@@ -181,6 +207,20 @@ class RoomController extends Notifier<RoomViewState> {
     return true;
   }
 
+  /// 本物（デモでない）の部屋が続いているか。終端（stopped/expired）・期限切れ・認証切れ・二重接続で
+  /// 閉じられたあとは false。ただし stop がまだ届いていないときは true（捨てると stop が送れなくなる）。
+  bool get hasLiveRealRoom {
+    final v = state;
+    final s = v.session;
+    if (s == null || s.isDemo) return false;
+    if (v.phase.isTerminal) return false;
+    if (s.stopPending) return true;
+    return switch (v.endedBy) {
+      ConnectionEnd.expired || ConnectionEnd.unauthorized || ConnectionEnd.terminal || ConnectionEnd.duplicate => false,
+      _ => true,
+    };
+  }
+
   // ---------------- WebSocket（ユーザー操作） ----------------
 
   /// host の承認（guest が送っても何も起きない）。
@@ -202,9 +242,13 @@ class RoomController extends Notifier<RoomViewState> {
   bool judge() => _send({'type': 'judge'});
 
   /// 共有をやめる。送れなくても、この端末からの位置の送信はすぐ止め、つながったら送り直す。
+  /// 押したことはセッションと一緒に保存する（アプリが終了して開き直しても位置は送らず、stop だけを送る）。
   bool stop() {
-    state = state.copyWith(stopRequested: true);
+    final s = state.session;
+    final pending = (s == null || s.stopPending) ? s : s.copyWith(stopPending: true);
+    state = state.copyWith(stopRequested: true, session: pending);
     _stopLocation();
+    if (pending != null && !identical(pending, s)) unawaited(_queueStore((st) => st.save(pending)));
     return _send({'type': 'stop'});
   }
 
@@ -214,7 +258,7 @@ class RoomController extends Notifier<RoomViewState> {
   Future<void> leave() async {
     final s = state.session;
     _teardown();
-    if (s != null) await ref.read(activeSessionStoreProvider).clear(s.roomId);
+    if (s != null) await _queueStore((st) => st.clear(s.roomId));
     if (s?.isDemo ?? false) {
       ref.read(demoBackendProvider).dispose();
       ref.read(demoModeProvider.notifier).end();
@@ -231,7 +275,10 @@ class RoomController extends Notifier<RoomViewState> {
     _teardown();
     _guard.reset();
     _demoFloorPreset = false;
-    state = RoomViewState(session: session, connection: const Connecting(0));
+    // 前の部屋・場所モード（/go）で入った階を持ち込まない（サーバーの self.floor が正）。
+    ref.read(ownFloorProvider.notifier).clear();
+    // stop が未送信のまま保存されていたら、その状態のまま戻す（位置は送らず、つながったら stop を送る）。
+    state = RoomViewState(session: session, connection: const Connecting(0), stopRequested: session.stopPending);
     late final RoomConnection conn;
     conn = RoomConnection(
       uri: _api.wsUri(session.roomId, session.role, session.secret),
@@ -246,7 +293,7 @@ class RoomController extends Notifier<RoomViewState> {
     );
     _conn = conn;
     conn.start();
-    _startLocation();
+    if (!session.stopPending) _startLocation();
   }
 
   bool _send(Map<String, Object?> msg) {
@@ -271,7 +318,14 @@ class RoomController extends Notifier<RoomViewState> {
       _onTerminal();
     }
     state = next;
-    if (s is Connected && state.stopRequested) _send({'type': 'stop'});
+    if (s is Connected) {
+      if (state.stopRequested) {
+        _send({'type': 'stop'});
+      } else {
+        // 切れている間に選んだ階は届いていないので、つながり直したら送り直す（階の画面ラベルだけ）。
+        ref.read(ownFloorProvider.notifier).resendAfterReconnect();
+      }
+    }
   }
 
   void _onEvent(ServerEvent ev) {
@@ -322,7 +376,7 @@ class RoomController extends Notifier<RoomViewState> {
     _conn?.markTerminal();
     _stopLocation();
     final s = state.session;
-    if (s != null) unawaited(ref.read(activeSessionStoreProvider).clear(s.roomId));
+    if (s != null) unawaited(_queueStore((st) => st.clear(s.roomId)));
   }
 
   // ---- 位置 ----
@@ -330,6 +384,11 @@ class RoomController extends Notifier<RoomViewState> {
   void _startLocation() {
     _posSub?.close();
     _posSub = ref.listen<AsyncValue<PositionFix>>(positionProvider, (_, next) {
+      // 許可の取り消し・位置情報オフ等で止まったら、最後の位置は捨てる（送り直さない）。
+      if (next.hasError) {
+        _lastFix = null;
+        return;
+      }
       final fix = next.value;
       if (fix != null) _onFix(fix);
     }, fireImmediately: true);
@@ -363,6 +422,8 @@ class RoomController extends Notifier<RoomViewState> {
     if (!fix.inShibuya) return; // 渋谷エリアの外では送らない
     if (!(_conn?.isOpen ?? false)) return;
     final now = DateTime.now().millisecondsSinceEpoch;
+    // 古い測位は送らない（GPS が止まったのに、サーバーで新しい位置として扱われないように）。
+    if (now - fix.timestampMs > kLocationResendMaxAgeMs) return;
     final wait = _guard.locationWaitMs(now);
     if (wait > 0) {
       // 間引き: 最新の1点だけを、送ってよくなった時点で送る。

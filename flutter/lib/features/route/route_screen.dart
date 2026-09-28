@@ -72,7 +72,11 @@ class _GoScreenState extends ConsumerState<GoScreen> {
   Future<void> _select(Place p) async {
     unawaited(Haptics.light());
     // 今いる階が未設定なら 1F（Web 版の既定と同じ）。選び直しでユーザーが直した階は保つ。
-    if (ref.read(ownFloorProvider) == null) ref.read(ownFloorProvider.notifier).setByUser('1F');
+    // 待ち合わせ中は入れない（本人が選んでいない階を相手へ送らないため。未選択でも道順は 1F として計算する）。
+    // 待ち合わせを始めるときは RoomController が階を消すので、ここで入れた 1F は部屋に持ち込まれない。
+    if (ref.read(ownFloorProvider) == null && ref.read(roomControllerProvider).session == null) {
+      ref.read(ownFloorProvider.notifier).setByUser('1F');
+    }
     setState(() => _selected = p);
     _map
       ..setPartner(MapPin(point: p.point, floor: levelToAppFloorInt(p.level), name: p.name))

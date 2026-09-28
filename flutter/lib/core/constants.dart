@@ -34,6 +34,10 @@ const int kLocationMinIntervalMs = 1200;
 /// 止まっていても位置が「古い(2分)」扱いにならないよう、最後の位置を送り直す間隔。
 const int kLocationHeartbeatMs = 20000;
 
+/// これより古い測位は送らない（送り直しも含む）。GPS が止まった（地下・許可の取り消し等）のに、
+/// 最後の位置を新しい位置として送り続けないため。相手には最長で約 1 分＋2 分で「位置が古い」と出る。
+const int kLocationResendMaxAgeMs = 60000;
+
 /// 階の選択肢（B5→10F の順）。サーバーの FLOORS と同じ。
 const List<String> kFloors = [
   'B5', 'B4', 'B3', 'B2', 'B1', //

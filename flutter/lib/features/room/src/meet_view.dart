@@ -208,7 +208,8 @@ class _MeetViewState extends ConsumerState<MeetView> {
     final places = ref.watch(placesProvider);
     final pois = ref.watch(poisProvider).value;
     final slots = ref.watch(meetSlotsProvider);
-    final locationOff = ref.watch(positionProvider.select((a) => a.hasError && !a.hasValue));
+    // 途中で許可の取り消し・位置情報オフになったときも出す（前の値が残っていても、もう送っていない）。
+    final locationOff = ref.watch(positionProvider.select((a) => a.hasError));
     final banner = meetBanner(v, nowMs: _nowMs);
     final dim = banner?.dimDistance ?? false;
     final placeList = places.value;

@@ -48,21 +48,38 @@ String? deepLinkToLocation(Uri uri, {String prodHost = 'shibuya-machimachi.kaeru
   }
 }
 
-/// app_links を聞いてルーターへ流す。同じ URL を二重に開かない（Capacitor 版の sm:lastOpenedUrl と同じ役目）。
+/// 同じリンクを二重に開かない間隔。起動時のリンクが2回届く（初回リンクと stream の両方）のを吸収するだけで、
+/// それより後にもう一度タップされた同じリンク（ホームに戻ってから同じ招待・デモを開き直す等）は開く。
+const Duration kDeepLinkDedupWindow = Duration(seconds: 2);
+
+/// リンクの流れを聞いてルーターへ流す。同じ URL が短い間に続けて届いたときだけ無視する
+/// （Capacitor 版の sm:lastOpenedUrl と同じ役目）。
 class DeepLinkListener {
-  DeepLinkListener(this.router, {AppLinks? appLinks}) : _links = appLinks ?? AppLinks();
-  final GoRouter router;
-  final AppLinks _links;
+  DeepLinkListener({required this.links, required this.go, int Function()? nowMs})
+      : _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// app_links の uriLinkStream（テストでは差し替え）。
+  final Stream<Uri> links;
+
+  /// router.go。
+  final void Function(String location) go;
+  final int Function() _nowMs;
   StreamSubscription<Uri>? _sub;
   String? _last;
+  int _lastAtMs = 0;
 
   void start() {
-    _sub = _links.uriLinkStream.listen((uri) {
-      final loc = deepLinkToLocation(uri);
-      if (loc == null || loc == _last) return;
-      _last = loc;
-      router.go(loc);
-    }, onError: (Object _) {});
+    _sub = links.listen(_onUri, onError: (Object _) {});
+  }
+
+  void _onUri(Uri uri) {
+    final loc = deepLinkToLocation(uri);
+    if (loc == null) return;
+    final now = _nowMs();
+    if (loc == _last && now - _lastAtMs < kDeepLinkDedupWindow.inMilliseconds) return;
+    _last = loc;
+    _lastAtMs = now;
+    go(loc);
   }
 
   void dispose() => _sub?.cancel();
@@ -79,7 +96,7 @@ class DeepLinkScope extends StatefulWidget {
 }
 
 class _DeepLinkScopeState extends State<DeepLinkScope> {
-  late final DeepLinkListener _l = DeepLinkListener(widget.router)..start();
+  late final DeepLinkListener _l = DeepLinkListener(links: AppLinks().uriLinkStream, go: widget.router.go)..start();
 
   @override
   void dispose() {

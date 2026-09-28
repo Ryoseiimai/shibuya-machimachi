@@ -32,10 +32,20 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
   String? _fieldError;
   String? _error;
 
+  /// 本物の待ち合わせが続いていて始められなかった（「今の待ち合わせに戻る」を出す）。
+  String? _activeRoomId;
+
   @override
   void initState() {
     super.initState();
+    // ディープリンク（…://demo）で開かれたときの自動デモ。本物の待ち合わせの途中なら始めない（RoomController が止める）。
     if (widget.startDemo) WidgetsBinding.instance.addPostFrameCallback((_) => _demo());
+  }
+
+  /// 失敗の表示。本物の待ち合わせが続いているせいなら、戻るボタンも出す。
+  void _showError(ApiException e) {
+    _error = createErrorText(e);
+    _activeRoomId = e.reason == 'room_active' ? ref.read(roomControllerProvider).session?.roomId : null;
   }
 
   @override
@@ -58,6 +68,7 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
       _busy = true;
       _fieldError = null;
       _error = null;
+      _activeRoomId = null;
     });
     final ctrl = ref.read(roomControllerProvider.notifier);
     try {
@@ -74,7 +85,7 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
         if (e.reason == 'invalid_nickname') {
           _fieldError = createErrorText(e);
         } else {
-          _error = createErrorText(e);
+          _showError(e);
         }
       });
     } finally {
@@ -96,12 +107,13 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
       _busy = true;
       _fieldError = null;
       _error = null;
+      _activeRoomId = null;
     });
     try {
       final s = await ref.read(roomControllerProvider.notifier).startDemo(_nick.text);
       if (mounted) context.go('/r/${s.roomId}');
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = createErrorText(e));
+      if (mounted) setState(() => _showError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -125,6 +137,11 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
             const SizedBox(height: 6),
             PrimaryButton(label: '待ち合わせを作る', onPressed: _busy ? null : _create),
             if (_error != null) InlineError(_error!),
+            if (_activeRoomId case final id?)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: SecondaryButton(label: '今の待ち合わせに戻る', onPressed: () => context.go('/r/$id')),
+              ),
             const HintText('作ると1回だけ使える招待リンクが出ます。相手に送って参加してもらいましょう。'),
             const HintText('アカウント登録は不要です。作った待ち合わせは3時間で自動的に終了します。'),
             const SizedBox(height: 14),
@@ -177,11 +194,33 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
   String? _joinError;
 
   RoomController get _ctrl => ref.read(roomControllerProvider.notifier);
+  late final AppLifecycleListener _lifecycle;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _enter());
+    // 設定アプリで位置情報を許可して戻ってきたら、止まっている位置の監視を作り直す
+    // （Riverpod の自動リトライは約40秒であきらめるため、待っていても動き出さない）。
+    _lifecycle = AppLifecycleListener(onResume: () => unawaited(_recheckLocation()));
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  Future<void> _recheckLocation() async {
+    // 誰も位置を見ていない（stop 後など）ときは GPS を起こさない。
+    if (!ref.exists(positionProvider) || !ref.read(positionProvider).hasError) return;
+    LocationAccess a;
+    try {
+      a = await ref.read(locationServiceProvider).currentAccess();
+    } catch (_) {
+      return;
+    }
+    if (mounted && a == LocationAccess.granted) ref.invalidate(positionProvider);
   }
 
   /// SPEC §6.1.2: 保存済みなら接続し直す → 招待が無ければ行き止まり → 招待をのぞく。
