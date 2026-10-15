@@ -18,6 +18,22 @@
   var RECONNECT_BASE_MS = 1000;
   var RECONNECT_MAX_MS = 15000;
   var STATUS_BANNER_POLL_MS = 5000; // WSが止まっていても「最終更新から何秒」表示を進めるための定期再評価
+  var relativeTimeFormatter = null;
+  function updateOtherUpdatedAt() {
+    var updatedEl = document.getElementById("meet-updated-at");
+    if (!updatedEl) return;
+    var timestamp = lastState && lastState.phase === "active" && lastState.other
+      ? lastState.other.lastUpdatedAt : null;
+    updatedEl.textContent = timestamp != null
+      ? "相手の最終更新: " + (relativeTimeFormatter
+          ? relativeTimeFormatter(timestamp)
+          : new Date(timestamp).toLocaleTimeString("ja-JP"))
+      : "相手の位置を待っています…";
+  }
+  import("/assets/js/format.js").then(function (mod) {
+    relativeTimeFormatter = mod.formatRelativeTime;
+    updateOtherUpdatedAt();
+  }).catch(function () {});
   function showOnly(name) {
     for (var i = 0; i < SCREENS.length; i++) {
       var el = document.getElementById("screen-" + SCREENS[i]);
@@ -277,13 +293,7 @@ var ASSET_VERSION_QUERY = "?v=20260927r";
     distEl.textContent = state.distance_m != null ? state.distance_m : "--";
     if (state.bearing_deg != null) applyArrowRotation(state.bearing_deg);
 
-    var updatedEl = document.getElementById("meet-updated-at");
-    if (state.other && state.other.lastUpdatedAt) {
-      var t = new Date(state.other.lastUpdatedAt).toLocaleTimeString("ja-JP");
-      updatedEl.textContent = "相手の最終更新: " + t;
-    } else {
-      updatedEl.textContent = "相手の位置を待っています…";
-    }
+    updateOtherUpdatedAt();
 
     document.getElementById("floor-diff-text").textContent = state.floorDiffText || "";
     renderMeetSpot(state);
@@ -1130,6 +1140,7 @@ var ASSET_VERSION_QUERY = "?v=20260927r";
     // WSが止まっていても「最終更新から何秒経ったか」の表示(通信切れバナー・古い位置の薄表示)を
     // 進めるための定期再評価。renderMeet()を経由しない軽量な関数なので、頻度が高くても負荷は小さい。
     setInterval(updateStatusBanner, STATUS_BANNER_POLL_MS);
+    setInterval(updateOtherUpdatedAt, 1000);
     document.getElementById("go-place-btn").onclick = function () { location.href = "/go"; };
     var m = location.pathname.match(/^\/r\/([a-f0-9]{32})$/);
     if (m) { initRoomScreen(m[1]); return; }
