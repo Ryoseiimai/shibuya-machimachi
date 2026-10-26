@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "budoux": "^0.9.2"
+  },
+  "overrides": {
+    "undici": "7.30.1"
   }
 }
